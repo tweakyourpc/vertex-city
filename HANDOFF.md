@@ -33,7 +33,7 @@ and explicitly marked procedural interpretation. The renderer must interpret
 irregular real-world geometry rather than replacing it with a renderer-shaped
 synthetic grid.
 
-Repository: `https://github.com/tweakyourpc/ascii-city-2`
+Repository: `https://github.com/tweakyourpc/ascii-city-3` (private)
 
 ## Standing orders
 
