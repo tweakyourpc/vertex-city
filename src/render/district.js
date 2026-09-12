@@ -36,6 +36,19 @@ export class Mesh {
         CORNER[i][0], CORNER[i][1], ew, eh);
     }
   }
+  /**
+   * One triangle, for geometry that is not a quad.
+   *
+   * Its `extent` is zero on both axes, which the wireframe reads as "this face
+   * has no border to measure" and draws no line for. That is deliberate: a
+   * triangulated roof outlined per triangle would show its own tessellation,
+   * and the roof's real outline is already drawn by the tops of the walls.
+   */
+  tri(points, normal, colour, kind = 0, seed = 0) {
+    for (const p of points) {
+      this.data.push(...p, ...normal, ...colour, 0, 0, kind, seed, 0, 0, 0, 0);
+    }
+  }
   box(x, y, z, w, d, h, angle, colour, kind = 0, seed = 0) {
     const c = Math.cos(angle), s = Math.sin(angle);
     const p = (a,b,k) => [x + c*a - s*b, y + s*a + c*b, z+k];
@@ -93,26 +106,88 @@ function frontage(mesh,a,b,height,seed,colour) {
   }
 }
 
+/**
+ * Triangulate a simple polygon by ear clipping.
+ *
+ * Roofs used to be paved with axis-aligned cell squares, which is exact only
+ * for a footprint aligned to the grid. Any other angle produced a stair-stepped
+ * slab: corners jutting past the wall on one side, daylight between the steps
+ * on the other. The ring is the truth about where the roof is, so cut it up
+ * directly. Ear clipping rather than a centroid fan because footprints are
+ * routinely concave (every L-shaped block) and a fan turns those inside out.
+ *
+ * Returns a flat list of triangles; a ring it cannot resolve returns none,
+ * which loses a roof rather than emitting scrambled geometry.
+ */
+export function triangulate(ring) {
+  const pts = ring.slice();
+  // Rings arrive closed; the duplicate last point is not a vertex.
+  if (pts.length > 1 && pts[0][0] === pts[pts.length-1][0]
+                     && pts[0][1] === pts[pts.length-1][1]) pts.pop();
+  const n = pts.length;
+  if (n < 3) return [];
+
+  const area2 = (a,b,c) => (b[0]-a[0])*(c[1]-a[1]) - (b[1]-a[1])*(c[0]-a[0]);
+  let sum = 0;
+  for (let i = 0; i < n; i++) {
+    const p = pts[i], q = pts[(i+1)%n];
+    sum += (q[0]-p[0]) * (q[1]+p[1]);
+  }
+  // Work counter-clockwise so a positive cross product means a convex corner.
+  const idx = [...pts.keys()];
+  if (sum > 0) idx.reverse();
+
+  const inside = (a,b,c,p) =>
+    area2(a,b,p) >= 0 && area2(b,c,p) >= 0 && area2(c,a,p) >= 0;
+
+  const out = [];
+  let guard = idx.length * idx.length;
+  while (idx.length > 3 && guard-- > 0) {
+    let clipped = false;
+    for (let i = 0; i < idx.length; i++) {
+      const a = pts[idx[(i + idx.length - 1) % idx.length]];
+      const b = pts[idx[i]];
+      const c = pts[idx[(i + 1) % idx.length]];
+      if (area2(a,b,c) <= 0) continue;            // reflex, not an ear
+      let clean = true;
+      for (const j of idx) {
+        const p = pts[j];
+        if (p === a || p === b || p === c) continue;
+        if (inside(a,b,c,p)) { clean = false; break; }
+      }
+      if (!clean) continue;
+      out.push([a,b,c]);
+      idx.splice(i,1);
+      clipped = true;
+      break;
+    }
+    if (!clipped) return out.length ? out : [];   // self-intersecting ring
+  }
+  if (idx.length === 3) out.push([pts[idx[0]],pts[idx[1]],pts[idx[2]]]);
+  return out;
+}
+
 function building(mesh,world,b) {
   const seed=Number(b.osm?.split('/')[1]) || Math.round(b.cx*31+b.cy*17);
   const colour=PALETTE[Math.abs(seed)%PALETTE.length];
   for (const ring of b.rings || []) {
-    // Preserve the mapped perimeter; roofs use the canonical footprint cells
-    // below so concavities and courtyards stay open.
+    // The perimeter is the truth about where this building is: walls follow it,
+    // and the roof is that same outline cut into triangles, so the slab ends
+    // exactly where the walls do.
     for(let i=1;i<ring.length;i++) frontage(mesh,ring[i-1],ring[i],b.h,seed,colour);
-    const minX=Math.floor(Math.min(...ring.map(p=>p[0]))),maxX=Math.ceil(Math.max(...ring.map(p=>p[0])));
-    const minY=Math.floor(Math.min(...ring.map(p=>p[1]))),maxY=Math.ceil(Math.max(...ring.map(p=>p[1])));
-    for(let y=minY;y<maxY;y++) for(let x=minX;x<maxX;x++) {
-      const slot=world.sample(x+.5,y+.5);
-      if (world.buildings[world.bid[slot]] !== b) continue;
-      mesh.quad([[x,y,b.h],[x+1,y,b.h],[x+1,y+1,b.h],[x,y+1,b.h]],[0,0,1],[.60,.61,.58]);
+    for(const [p,q,r] of triangulate(ring)) {
+      mesh.tri([[p[0],p[1],b.h],[q[0],q[1],b.h],[r[0],r[1],b.h]],[0,0,1],[.60,.61,.58]);
     }
   }
 }
 
 /** Rebuild only after a sector change; all decoration seeds are world anchored. */
 export function buildDistrict(world, cam, radius = 145) {
-  const mesh=new Mesh(), walkers=[];
+  // Lights are built into their own mesh. They are drawn in a second, additive
+  // pass, because a light has to brighten the ground it falls on rather than
+  // replace it: as one opaque disc the pool hid the kerb, the markings and the
+  // planting it was supposed to illuminate.
+  const mesh=new Mesh(), lights=new Mesh(), walkers=[];
   const cx=Math.floor(cam.x/32)*32+16,cy=Math.floor(cam.y/32)*32+16;
   const nearbyJunctions=(world.junctions||[]).filter(j=>Math.hypot(j.x-cx,j.y-cy)<radius+15);
   mesh.box(cx,cy,-.10,radius*2.8,radius*2.8,.1,0,[.70,.71,.65]);
@@ -167,8 +242,14 @@ export function buildDistrict(world, cam, radius = 145) {
     if(['motorway','trunk','motorway_link','trunk_link'].includes(road.cls)) continue;
     const foot=['footway','path','pedestrian','steps','cycleway'].includes(road.cls);
     const width=road.width || 3.8;
+    // Distance travelled along the whole polyline, not along this segment. The
+    // cadence below restarted at every vertex, so each segment placed its own
+    // furniture near a shared corner and both sides of a bend got a set: the
+    // clustering at junctions was two rows meeting, not one row bunching.
+    let along0=0;
     for(let i=1;i<road.pts.length;i++) {
       const a=road.pts[i-1],b=road.pts[i],dx=b[0]-a[0],dy=b[1]-a[1],len=Math.hypot(dx,dy);
+      const base=along0; along0+=len;
       if(len<.1) continue;
       const t=Math.max(0,Math.min(1,((cx-a[0])*dx+(cy-a[1])*dy)/(len*len)));
       if(Math.hypot(a[0]+dx*t-cx,a[1]+dy*t-cy)>radius) continue;
@@ -181,7 +262,14 @@ export function buildDistrict(world, cam, radius = 145) {
         if(nearbyJunctions.some(j=>Math.hypot(j.x-(a[0]+ux*d),j.y-(a[1]+uy*d))<width+1)) continue;
         mesh.box(a[0]+ux*d,a[1]+uy*d,.073,1.8,.065,.003,angle,[.92,.86,.61]);
       }
-      for(let d=Math.ceil(lo/18)*18;d<hi;d+=18) for(const side of [-1,1]) {
+      // Step on a grid measured along the road itself, and alternate which
+      // kerb each piece lands on, the way street furniture is actually spaced.
+      // Both sides at every stop put two of everything at each interval.
+      const STEP=14;
+      const first=Math.ceil((base+lo)/STEP)*STEP;
+      for(let g=first;g<base+hi;g+=STEP) {
+        const d=g-base;
+        const side=(Math.round(g/STEP)&1)?1:-1;
         const offset=width/2+.8,x=a[0]+ux*d-uy*offset*side,y=a[1]+uy*d+ux*offset*side;
         const slot=world.sample(x,y);
         if(world.h[slot]>.1 || ![T.SIDEWALK,T.PATH,T.YARD].includes(world.type[slot]) || Math.hypot(x-cx,y-cy)>65) continue;
@@ -190,8 +278,19 @@ export function buildDistrict(world, cam, radius = 145) {
         if(seed%3) tree(mesh,x,y,seed);
         else {
           mesh.box(x,y,.06,.055,.055,2.3,0,[.22,.29,.29]);
-          mesh.box(x,y,2.3,.38,.38,.07,angle,[1,.87,.55],3);
-          mesh.disc(x,y,.075,1.6,[.53,.52,.42]);
+          // An opaque housing with the light on its underside. The head used to
+          // be one emissive box, and nothing culls backfaces here, so its top
+          // face glowed at anyone looking down on it: a lit tile on a pole
+          // rather than a lamp. The housing now occludes the source from above,
+          // and the source only faces the ground it is lighting.
+          mesh.box(x,y,2.30,.38,.38,.07,angle,[.20,.23,.24]);
+          const g=.155;
+          mesh.quad([[x-g,y-g,2.295],[x+g,y-g,2.295],[x+g,y+g,2.295],[x-g,y+g,2.295]],
+            [0,0,-1],[1,.87,.55],3);
+          // Radial falloff rides in the disc's uv.x, which runs 0 at the
+          // centre to 1 at the rim, so the pool fades out instead of ending
+          // at a hard circle.
+          lights.disc(x,y,.03,3.2,[1,.82,.48],5);
         }
         if(seed%4===0) {
           const bx=x+ux*1.8,by=y+uy*1.8;
@@ -203,7 +302,7 @@ export function buildDistrict(world, cam, radius = 145) {
       }
     }
   }
-  return { vertices:mesh.array(),walkers,cx,cy };
+  return { vertices:mesh.array(),lights:lights.array(),walkers,cx,cy };
 }
 
 export function buildMovers(traffic, district, time) {

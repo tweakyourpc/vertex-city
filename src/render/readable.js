@@ -60,6 +60,7 @@ uniform vec3 wireGround;
 uniform vec3 wireVoid;
 uniform vec3 sunDir;   // unit vector toward the sun, world axes
 uniform vec3 wireFrontier;
+uniform float lightPass;
 float noise(vec2 p) { return fract(sin(dot(p, vec2(12.9898,78.233)) + mod(vSeed, 997.0)) * 437.5453); }
 void main() {
   vec3 colour = vColour;
@@ -67,6 +68,17 @@ void main() {
   // material, so every material test below reads the same as it always did.
   float sim = step(8.0, vKind);
   float kind = vKind - sim * 8.0;
+
+  // Lights are drawn additively in their own pass, so a pool brightens the
+  // ground it lands on instead of covering it. uv.x runs 0 at a disc's centre
+  // to 1 at its rim, which gives the falloff without a texture.
+  if (lightPass > 0.5) {
+    float fall = 1.0 - vUv.x;
+    fall *= fall;
+    float far = 1.0 - smoothstep(90.0, 240.0, vDistance);
+    gl_FragColor = vec4(colour * fall * far * (1.0 - daylight), 1.0);
+    return;
+  }
 
   // Wireframe view. The city's real geometry, drawn as light on its own edges:
   // the layout stays surveyed while the surfaces stop pretending to be matter.
@@ -200,9 +212,10 @@ export class ReadableRenderer {
     if (!gl.getProgramParameter(this.program, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(this.program));
     this.staticBuffer = gl.createBuffer();
     this.movingBuffer = gl.createBuffer();
+    this.lightBuffer = gl.createBuffer();
     this.attributes = ['position','normal','colour','uv','kind','seed','quad'].map(name => gl.getAttribLocation(this.program,name));
     this.uniforms = Object.fromEntries(['camera','forward','tangent','aspect','horizon','daylight','time','haze',
-      'wire','wireUnit','wireBuilding','wireWater','wireCanopy','wireGround','wireVoid','sunDir','wireFrontier'].map(name => [name,gl.getUniformLocation(this.program,name)]));
+      'wire','wireUnit','wireBuilding','wireWater','wireCanopy','wireGround','wireVoid','sunDir','wireFrontier','lightPass'].map(name => [name,gl.getUniformLocation(this.program,name)]));
     this.world = null;
     this.district = null;
     this.generation = 0;
@@ -244,6 +257,7 @@ export class ReadableRenderer {
       this.world = world;
       this.generation++;
       this.upload(this.staticBuffer,this.district.vertices,gl.STATIC_DRAW);
+      this.upload(this.lightBuffer,this.district.lights,gl.STATIC_DRAW);
     }
     gl.viewport(0,0,this.canvas.width,this.canvas.height);
     gl.clearColor(0,0,0,0);
@@ -260,6 +274,7 @@ export class ReadableRenderer {
     gl.uniform1f(u.time,time%10000);
     gl.uniform3f(u.haze,light.skyBottom[0]/255,light.skyBottom[1]/255,light.skyBottom[2]/255);
     gl.uniform1f(u.wire,wireframe?1:0);
+    gl.uniform1f(u.lightPass,0);
     gl.uniform3fv(u.sunDir,sunDir);
     const scheme = wirePalette(palette);
     if (wireframe) {
@@ -291,5 +306,20 @@ export class ReadableRenderer {
     const movers = buildMovers(traffic,this.district,time);
     this.upload(this.movingBuffer,movers,gl.DYNAMIC_DRAW);
     this.geometry(this.movingBuffer,movers.length/STRIDE);
+
+    // Lights last, added onto the finished scene. Depth still tests, so a pool
+    // does not shine through a wall, but nothing writes depth: overlapping
+    // pools should sum rather than occlude one another.
+    const lights = this.district.lights;
+    if (lights.length && light.dayAmt < 0.999) {
+      gl.uniform1f(u.lightPass,1);
+      gl.enable(gl.BLEND);
+      gl.blendFunc(gl.ONE,gl.ONE);
+      gl.depthMask(false);
+      this.geometry(this.lightBuffer,lights.length/STRIDE);
+      gl.depthMask(true);
+      gl.disable(gl.BLEND);
+      gl.uniform1f(u.lightPass,0);
+    }
   }
 }

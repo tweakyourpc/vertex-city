@@ -374,7 +374,31 @@ export class Traffic {
       const ahead = other.distance - a.distance;
       if (ahead > 0 && ahead < gap) gap = ahead;
     }
-    if (gap < 6) {
+
+    // Same-lane headway only ever sees cars that share an edge, so two cars
+    // crossing at a junction, or meeting where lanes converge, were invisible
+    // to each other and drove straight through. Pedestrians were never
+    // considered at all. Sweep everyone in a corridor ahead in world space,
+    // which catches all of those with one test and no lane bookkeeping.
+    // Every comparison is written so that a NaN fails it and the agent is
+    // skipped. A car without a position or heading yet would otherwise pass
+    // the guards, since NaN satisfies no inequality, and set the gap to NaN,
+    // which silently disables braking for everyone.
+    const halfWide = a.vehicle.width * 0.5;
+    for (const other of agents) {
+      if (other === a) continue;
+      const ahead = (other.x - a.x) * a.hx + (other.y - a.y) * a.hy;
+      if (!(ahead > 0) || !(ahead < gap)) continue;
+      const lateral = Math.abs((other.x - a.x) * a.hy - (other.y - a.y) * a.hx);
+      const theirs = other.kind === 'car'
+        ? (this._prepareCar(other).vehicle.width * 0.5) : PED_WIDTH * 0.5;
+      if (!(lateral <= halfWide + theirs + 0.12)) continue;
+      gap = ahead;
+    }
+    // Braking used to engage at 6 cells. A car at full speed needs about 4.6 to
+    // stop at this deceleration, so it was committing to the stop with almost
+    // no margin and still slid into whatever it was braking for.
+    if (gap < 11) {
       let leadLength = a.vehicle.length;
       for (const other of agents) {
         if (other === a || other.kind !== 'car' || other.edgeId !== a.edgeId) continue;

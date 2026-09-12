@@ -171,11 +171,17 @@ export function groundColour(world, s, f, L) {
 
   const a = stripe ? Math.max(0.35, L.amb) : L.amb;
   const lamp = world.lamp[s] * (1 - L.dayAmt) * 0.6;
-  const cr = r * a + 255 * lamp;
-  const cg = g * a + 176 * lamp;
-  const cb = b * a + 96 * lamp;
+  // A lamp brightens the ground it falls on; it does not replace it. Adding a
+  // fixed warm colour pushed every surface in the pool toward the same sodium
+  // wash, so grass, asphalt and paving all read as one shade under a light.
+  // Scaling the surface's own colour keeps kerbs, markings and planting legible
+  // where they are lit, which is the reason to light them. The blue channel is
+  // held back slightly so the pool still reads as a warm lamp, not a spotlight.
+  const lit = a + lamp * 1.9;
+  const cr = r * lit;
+  const cg = g * lit * (1 - 0.06 * Math.min(1, lamp * 2));
+  const cb = b * lit * (1 - 0.20 * Math.min(1, lamp * 2));
   // Ground catches the sun broadly (it faces up), so a full warm tint.
-  // Boost midday warmth and keep night colours faint but visible.
   const dayBoost = 0.8 + 0.2 * L.dayAmt;
   return L.sunTint(cr * dayBoost, cg * dayBoost, cb * dayBoost, 1);
 }
