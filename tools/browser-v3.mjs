@@ -1,0 +1,63 @@
+import assert from 'node:assert/strict';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
+const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
+const base = process.env.ASCII_CITY_URL;
+if (!base) throw new Error('Set ASCII_CITY_URL to the broker-assigned v3 preview URL.');
+const browser = await chromium.launch({ headless: true,
+  ...(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {}),
+  args: ['--enable-webgl','--use-gl=angle','--use-angle=swiftshader','--enable-unsafe-swiftshader'],
+});
+try {
+  const page = await browser.newPage({ viewport: { width:1440,height:950 } });
+  const errors=[];
+  page.on('pageerror', error=>errors.push(error.message));
+  await page.goto(base+'/#city=procedural&t=1789056000000');
+  await page.waitForFunction(()=>window.state?.phase==='ready' && document.getElementById('loc').textContent.length>0);
+  assert.equal(await page.evaluate(()=>window.presentation.appearance),'readable');
+  assert.ok(await page.evaluate(()=>window.readable.district.vertices.length>0));
+  await page.screenshot({path:'/tmp/ascii-city-v3-day.png'});
+  console.log('Day view:',await page.locator('#loc').textContent());
+  const before=await page.evaluate(()=>({x:window.cam.x,y:window.cam.y}));
+  await page.locator('#c').focus();await page.keyboard.down('w');
+  await page.waitForTimeout(750);await page.keyboard.up('w');
+  const after=await page.evaluate(()=>({x:window.cam.x,y:window.cam.y}));
+  assert.ok(Math.hypot(after.x-before.x,after.y-before.y)>.08);
+  await page.locator('#open-view').click();
+  await page.selectOption('#appearance','ascii');
+  assert.equal(await page.evaluate(()=>window.screen.mode),0);
+  await page.selectOption('#appearance','readable');
+  await page.selectOption('#lighting','night');
+  await page.locator('#close-panel').click();
+  await page.waitForTimeout(300);await page.screenshot({path:'/tmp/ascii-city-v3-night.png'});
+  await page.locator('#open-layers').click();
+  await page.locator('[data-layer="quakes"]').check();
+  assert.equal(await page.locator('#layer-count').textContent(),'1');
+  await page.locator('[data-layer="quakes"]').uncheck();
+  await page.locator('#open-city').click();
+  const stable=await page.evaluate(()=>({x:window.cam.x,y:window.cam.y}));
+  await page.locator('#coords').pressSequentially('Warsaw');
+  await page.waitForTimeout(300);
+  const still=await page.evaluate(()=>({x:window.cam.x,y:window.cam.y}));
+  assert.ok(Math.hypot(stable.x-still.x,stable.y-still.y)<.01);
+  await page.selectOption('#city','demo');
+  await page.waitForFunction(()=>window.state?.world?.synthetic && window.state.phase==='ready');
+  assert.equal(await page.locator('#source-badge').textContent(),'FICTIONAL CITY');
+  assert.match(await page.locator('#attrib').textContent(),/Fictional/);
+  await page.locator('#open-view').click();await page.selectOption('#lighting','day');
+  await page.locator('#close-panel').click();
+  await page.waitForTimeout(300);await page.screenshot({path:'/tmp/ascii-city-v3-demo.png'});
+  await page.locator('#flight-toggle').click();
+  await page.waitForFunction(()=>window.cam.movement==='fly');
+  await page.locator('#flight-toggle').click();
+  await page.waitForFunction(()=>window.cam.movement==='walk');
+  await page.setViewportSize({width:390,height:844});
+  await page.waitForTimeout(300);
+  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
+  await page.screenshot({path:'/tmp/ascii-city-v3-mobile.png'});
+  const identity=await(await page.request.get(base+'/whoami')).json();
+  assert.equal(identity.service,'ascii-city-v3');
+  assert.equal((await page.request.get(base+'/package.json')).status(),404);
+  assert.deepEqual(errors,[]);
+  console.log('Passed: rendered cityscape, movement, ASCII switch, lighting, layers, input isolation, demo provenance, flight, mobile layout, and server identity.');
+} finally { await browser.close(); }

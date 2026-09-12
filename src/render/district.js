@@ -1,0 +1,198 @@
+import { T, hash } from '../world/source.js';
+import { FLOOR_H } from '../config.js';
+
+export const STRIDE = 13;
+const PALETTE = [[.83,.76,.64],[.73,.48,.35],[.91,.86,.73],[.57,.66,.67],[.77,.68,.56],[.89,.80,.66]];
+
+/** CPU mesh assembly is independent of the GPU, and reusable in geometry tests. */
+export class Mesh {
+  constructor() { this.data = []; }
+  quad(points, normal, colour, kind = 0, seed = 0, uv = [[0,0],[1,0],[1,1],[0,1]]) {
+    for (const i of [0,1,2,0,2,3]) this.data.push(...points[i], ...normal, ...colour, ...uv[i], kind, seed);
+  }
+  box(x, y, z, w, d, h, angle, colour, kind = 0, seed = 0) {
+    const c = Math.cos(angle), s = Math.sin(angle);
+    const p = (a,b,k) => [x + c*a - s*b, y + s*a + c*b, z+k];
+    const corners = [[-w/2,-d/2],[w/2,-d/2],[w/2,d/2],[-w/2,d/2]];
+    for (let i = 0; i < 4; i++) {
+      const a = corners[i], b = corners[(i+1)%4];
+      const ex = b[0]-a[0], ey = b[1]-a[1], length = Math.hypot(ex,ey);
+      const nx = ey/length, ny = -ex/length;
+      this.quad([p(...a,0),p(...b,0),p(...b,h),p(...a,h)], [c*nx-s*ny,s*nx+c*ny,0], colour, kind, seed,
+        [[0,z],[length,z],[length,z+h],[0,z+h]]);
+    }
+    this.quad(corners.map(a => p(...a,h)), [0,0,1], colour, kind === 1 ? 0 : kind, seed);
+  }
+  disc(x,y,z,r,colour, kind=0) {
+    for(let i=0;i<12;i++) {
+      const a=i*Math.PI/6,b=(i+1)*Math.PI/6;
+      this.quad([[x,y,z],[x+Math.cos(a)*r,y+Math.sin(a)*r,z],
+        [x+Math.cos(b)*r,y+Math.sin(b)*r,z],[x,y,z]], [0,0,1], colour,kind);
+    }
+  }
+  array() { return new Float32Array(this.data); }
+}
+
+function canopy(mesh,x,y,z,radius,colour) {
+  const point=(lat,lon)=>[x+Math.cos(lat)*Math.cos(lon)*radius,
+    y+Math.cos(lat)*Math.sin(lon)*radius,z+Math.sin(lat)*radius*.80];
+  for(let ring=0;ring<5;ring++) for(let side=0;side<8;side++) {
+    const lo=-Math.PI/2+ring*Math.PI/5,hi=lo+Math.PI/5;
+    const a=side*Math.PI/4,b=a+Math.PI/4,mid=(lo+hi)/2;
+    mesh.quad([point(lo,a),point(lo,b),point(hi,b),point(hi,a)],
+      [Math.cos(mid)*Math.cos((a+b)/2),Math.cos(mid)*Math.sin((a+b)/2),Math.sin(mid)],colour,2);
+  }
+}
+function tree(mesh,x,y,seed) {
+  mesh.disc(x+.30,y-.25,.078,.85,[.29,.34,.27]);
+  mesh.box(x,y,.02,.13,.13,1.6,0,[.36,.29,.21]);
+  const colour=[.29+hash(seed,1,3)*.05,.43+hash(seed,2,3)*.09,.26];
+  canopy(mesh,x,y,2.05,.95,colour);
+  canopy(mesh,x+.35,y-.12,1.8,.67,colour);
+}
+
+function frontage(mesh,a,b,height,seed,colour) {
+  const dx=b[0]-a[0],dy=b[1]-a[1],len=Math.hypot(dx,dy);
+  if(len < 1) return;
+  const nx=dy/len,ny=-dx/len,angle=Math.atan2(dy,dx);
+  mesh.quad([[...a,0],[...b,0],[...b,height],[...a,height]],[nx,ny,0],colour,1,seed,
+    [[0,0],[len,0],[len,height],[0,height]]);
+  // Cornice and a recessed ground-floor canopy give the wall a human scale.
+  mesh.box((a[0]+b[0])/2,(a[1]+b[1])/2,height-.10,len+.08,.16,.15,angle,[.90,.86,.76]);
+  if(len>3) {
+    const awning=[.20,.39,.37];
+    if(seed%3===1) awning.splice(0,3,.59,.28,.22);
+    mesh.box((a[0]+b[0])/2+nx*.21,(a[1]+b[1])/2+ny*.21,1.06,len*.76,.65,.12,angle,awning);
+    mesh.box((a[0]+b[0])/2+nx*.13,(a[1]+b[1])/2+ny*.13,FLOOR_H-.09,len*.58,.12,.26,angle,[.17,.27,.28]);
+  }
+}
+
+function building(mesh,world,b) {
+  const seed=Number(b.osm?.split('/')[1]) || Math.round(b.cx*31+b.cy*17);
+  const colour=PALETTE[Math.abs(seed)%PALETTE.length];
+  for (const ring of b.rings || []) {
+    // Preserve the mapped perimeter; roofs use the canonical footprint cells
+    // below so concavities and courtyards stay open.
+    for(let i=1;i<ring.length;i++) frontage(mesh,ring[i-1],ring[i],b.h,seed,colour);
+    const minX=Math.floor(Math.min(...ring.map(p=>p[0]))),maxX=Math.ceil(Math.max(...ring.map(p=>p[0])));
+    const minY=Math.floor(Math.min(...ring.map(p=>p[1]))),maxY=Math.ceil(Math.max(...ring.map(p=>p[1])));
+    for(let y=minY;y<maxY;y++) for(let x=minX;x<maxX;x++) {
+      const slot=world.sample(x+.5,y+.5);
+      if (world.buildings[world.bid[slot]] !== b) continue;
+      mesh.quad([[x,y,b.h],[x+1,y,b.h],[x+1,y+1,b.h],[x,y+1,b.h]],[0,0,1],[.60,.61,.58]);
+    }
+  }
+}
+
+/** Rebuild only after a sector change; all decoration seeds are world anchored. */
+export function buildDistrict(world, cam, radius = 145) {
+  const mesh=new Mesh(), walkers=[];
+  const cx=Math.floor(cam.x/32)*32+16,cy=Math.floor(cam.y/32)*32+16;
+  const nearbyJunctions=(world.junctions||[]).filter(j=>Math.hypot(j.x-cx,j.y-cy)<radius+15);
+  mesh.box(cx,cy,-.10,radius*2.8,radius*2.8,.1,0,[.70,.71,.65]);
+  // Read existing terrain into coarse, contiguous runs. Buildings themselves
+  // are emitted from exact rings, not from these terrain samples.
+  for(let y=cy-radius;y<cy+radius;y+=2) {
+    let start=cx-radius,previous=-1;
+    const paint=(end,type) => {
+      if(![T.WATER,T.FIELD,T.YARD,T.FOREST,T.PATH].includes(type)) return;
+      const col=type===T.WATER?[.28,.55,.62]:type===T.PATH?[.74,.70,.57]:[.48,.62,.37];
+      mesh.box((start+end)/2,y+1,.002,end-start,2,.01,0,col,type===T.WATER?4:0);
+    };
+    for(let x=cx-radius;x<=cx+radius;x+=2) {
+      const slot=world.sample(x,y),type=world.type[slot];
+      if(type!==previous || x===cx+radius) { if(previous>=0) paint(x,previous); start=x; previous=type; }
+      if((type===T.TREE||type===T.FOREST) && Math.hypot(x-cx,y-cy)<70 && hash(x,y,27)>.85) tree(mesh,x,y,Math.round(x*19+y*7));
+    }
+  }
+  if(world.buildings?.length>1) {
+    for(const b of world.buildings) if(b && Math.hypot(b.cx-cx,b.cy-cy)<radius+b.r) building(mesh,world,b);
+  } else {
+    // Build from the exact collision cells, never approximate procedural
+    // buildings with different footprints. Merge row runs to keep the mesh small.
+    for(let y=Math.floor(cy-radius);y<cy+radius;y++) {
+      let x=Math.floor(cx-radius);
+      while(x<cx+radius) {
+        const slot=world.sample(x,y),type=world.type[slot],h=world.h[slot],pal=world.pal[slot];
+        if(type!==T.HOUSE && type!==T.TOWER) { x++; continue; }
+        const start=x;
+        while(++x<cx+radius) {
+          const next=world.sample(x,y);
+          if(world.type[next]!==type || world.h[next]!==h || world.pal[next]!==pal) break;
+        }
+        const colour=PALETTE[pal%PALETTE.length];
+        mesh.box((start+x)/2,y+.5,0,x-start,1,h,0,colour,1,pal);
+      }
+    }
+  }
+
+  for(const road of world.roads || []) {
+    if(['motorway','trunk','motorway_link','trunk_link'].includes(road.cls)) continue;
+    const foot=['footway','path','pedestrian','steps','cycleway'].includes(road.cls);
+    const width=road.width || 3.8;
+    for(let i=1;i<road.pts.length;i++) {
+      const a=road.pts[i-1],b=road.pts[i],dx=b[0]-a[0],dy=b[1]-a[1],len=Math.hypot(dx,dy);
+      if(len<.1) continue;
+      const t=Math.max(0,Math.min(1,((cx-a[0])*dx+(cy-a[1])*dy)/(len*len)));
+      if(Math.hypot(a[0]+dx*t-cx,a[1]+dy*t-cy)>radius) continue;
+      const lo=Math.max(0,t*len-radius),hi=Math.min(len,t*len+radius);
+      const ux=dx/len,uy=dy/len,angle=Math.atan2(dy,dx),mx=a[0]+ux*(lo+hi)/2,my=a[1]+uy*(lo+hi)/2;
+      // Sidewalk and asphalt have distinct, calm materials and real thickness.
+      mesh.box(mx,my,.014,hi-lo,width+2.5,.04,angle,[.80,.79,.71]);
+      mesh.box(mx,my,.056,hi-lo,width,.014,angle,foot?[.77,.74,.65]:[.32,.37,.40]);
+      if(!foot) for(let d=Math.ceil(lo/4)*4;d<hi;d+=4) {
+        if(nearbyJunctions.some(j=>Math.hypot(j.x-(a[0]+ux*d),j.y-(a[1]+uy*d))<width+1)) continue;
+        mesh.box(a[0]+ux*d,a[1]+uy*d,.073,1.8,.065,.003,angle,[.92,.86,.61]);
+      }
+      for(let d=Math.ceil(lo/18)*18;d<hi;d+=18) for(const side of [-1,1]) {
+        const offset=width/2+.8,x=a[0]+ux*d-uy*offset*side,y=a[1]+uy*d+ux*offset*side;
+        const slot=world.sample(x,y);
+        if(world.h[slot]>.1 || ![T.SIDEWALK,T.PATH,T.YARD].includes(world.type[slot]) || Math.hypot(x-cx,y-cy)>65) continue;
+        if(nearbyJunctions.some(j=>Math.hypot(j.x-x,j.y-y)<width+2)) continue;
+        const seed=Math.round(hash(Math.round(x*8),Math.round(y*8),42)*10000);
+        if(seed%3) tree(mesh,x,y,seed);
+        else {
+          mesh.box(x,y,.06,.055,.055,2.3,0,[.22,.29,.29]);
+          mesh.box(x,y,2.3,.38,.38,.07,angle,[1,.87,.55],3);
+          mesh.disc(x,y,.075,1.6,[.53,.52,.42]);
+        }
+        if(seed%4===0) {
+          const bx=x+ux*1.8,by=y+uy*1.8;
+          mesh.box(bx,by,.20,.9,.32,.08,angle,[.51,.33,.20]);
+          mesh.box(bx+uy*.12,by-ux*.12,.28,.9,.07,.3,angle,[.51,.33,.20]);
+        }
+        walkers.push({x:a[0]-uy*(width/2+.5)*side,y:a[1]+ux*(width/2+.5)*side,
+          ux,uy,lo:Math.max(lo,d-5),hi:Math.min(hi,d+5),seed});
+      }
+    }
+  }
+  return { vertices:mesh.array(),walkers,cx,cy };
+}
+
+export function buildMovers(traffic, district, time) {
+  const mesh=new Mesh();
+  if(traffic.mode===0) return mesh.array();
+  for(const car of traffic.agents) {
+    if(car.kind!=='car') continue;
+    const p=car.vehicle, x=car.renderX??car.x,y=car.renderY??car.y;
+    const angle=Math.atan2(car.hy||0,car.hx||1),col=p?.paint.map(c=>c/255)||[.73,.24,.18];
+    const len=p?.length||1.85,w=p?.width||.78;
+    mesh.box(x,y,.16,len,w,.28,angle,col);
+    mesh.box(x,y,.44,len*.55,w*.83,.28,angle,[.23,.38,.44]);
+    mesh.box(x,y,.70,len*.42,w*.78,.06,angle,col);
+    for(const side of [-1,1]) for(const end of [-1,1]) {
+      const ux=Math.cos(angle),uy=Math.sin(angle);
+      mesh.box(x+ux*len*.32*end-uy*w*.46*side,y+uy*len*.32*end+ux*w*.46*side,.075,.29,.12,.27,angle,[.12,.15,.16]);
+    }
+  }
+  if(traffic.mode===2) for(const p of traffic.agents) {
+    if(p.kind!=='ped') continue;
+    const x=p.renderX??p.x,y=p.renderY??p.y;
+    const walk=Math.sin(time*7+x)*.035;
+    mesh.box(x,y,.32,.20,.15,.27,0,[.38,.46,.54]);
+    mesh.box(x,y,.60,.14,.14,.14,0,[.75,.56,.40]);
+    mesh.box(x-.055,y+walk,.025,.07,.09,.30,0,[.23,.28,.32]);
+    mesh.box(x+.055,y-walk,.025,.07,.09,.30,0,[.23,.28,.32]);
+  }
+  return mesh.array();
+}

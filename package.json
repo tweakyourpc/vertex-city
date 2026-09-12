@@ -1,0 +1,31 @@
+{
+  "name": "ascii-city-v3",
+  "version": "3.0.0-preview",
+  "description": "An OSM-based city explorer with a readable surface view and optional live data layers.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Christopher Davis",
+  "scripts": {
+    "start": "PORT=$(portbroker get --name ascii-city-v3 || portbroker alloc --name ascii-city-v3) node dev-server.mjs",
+    "worker:dev": "wrangler dev",
+    "worker:deploy": "wrangler deploy",
+    "benchmark": "node tools/benchmark-engine.js",
+    "test": "node --test --test-concurrency=2 test/*.test.js",
+    "lint": "eslint .",
+    "check": "npm run lint && npm test",
+    "browser:check": "node tools/browser-v3.mjs"
+  },
+  "keywords": [
+    "ascii",
+    "openstreetmap",
+    "canvas",
+    "renderer",
+    "streets"
+  ],
+  "devDependencies": {
+    "@eslint/js": "^9.34.0",
+    "eslint": "^9.34.0",
+    "globals": "^16.3.0",
+    "wrangler": "^4.32.0"
+  }
+}
