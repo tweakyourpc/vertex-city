@@ -40,6 +40,15 @@ export const T = {
 export const F = {
   STRIPE: 1,     // road centre line
   BEACON: 2,     // aircraft warning light on the roof
+  /**
+   * This cell was invented, not surveyed. Set on ground the substrate
+   * generated beyond the edge of a mapped extract, and cleared wherever real
+   * geometry is stamped over it. Provenance is a property of the cell rather
+   * than of the world, because a composite world is both at once: standing
+   * order 5 requires that generated geography never present as measured fact,
+   * and a per-cell bit is what lets a renderer honour that.
+   */
+  SIMULATED: 4,
 };
 
 export const CHUNK = 32;
@@ -121,7 +130,13 @@ export class ChunkedWorld {
 
     const ccx = ax >> CHUNK_SHIFT;
     const ccy = ay >> CHUNK_SHIFT;
-    const key = ccy * 0x40000 + ccx;
+    // Biased so the packing stays injective for negative chunks and, just as
+    // importantly, never produces -1: that is the empty-memo sentinel, and an
+    // unbiased chunk (-1, 0) hashed straight onto it, so the first sample at a
+    // negative coordinate returned chunk 0 without ever generating its own.
+    // Unreachable while a world wraps its coordinates, which every world did
+    // until one chose not to.
+    const key = (ccy + 0x20000) * 0x40000 + (ccx + 0x20000);
 
     let base;
     if (key === this._memoKey) {

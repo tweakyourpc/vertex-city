@@ -7,6 +7,10 @@
  * panel, with no shader change: the fragment shader reads whichever four
  * colours are uploaded rather than hard-coding any of them.
  *
+ * `frontier` is the colour of invented ground. A composite world is surveyed in
+ * the middle and generated around it, and the wireframe draws that difference
+ * rather than hiding it: you can see where the map's knowledge ends.
+ *
  * Values are linear 0..1 RGB, matching the rest of the mesh colour pipeline.
  */
 export const WIRE_PALETTES = {
@@ -17,6 +21,7 @@ export const WIRE_PALETTES = {
     canopy:   [0.45, 1.00, 0.62],
     ground:   [1.00, 0.71, 0.24],
     void:     [0.012, 0.027, 0.047],
+    frontier: [1.00, 0.45, 0.62],
   },
   matrix: {
     label: 'Matrix · green rain',
@@ -25,6 +30,7 @@ export const WIRE_PALETTES = {
     canopy:   [0.68, 1.00, 0.35],
     ground:   [0.18, 0.82, 0.34],
     void:     [0.004, 0.024, 0.012],
+    frontier: [0.85, 0.95, 0.40],
   },
   blueprint: {
     label: 'Blueprint · drafting table',
@@ -33,6 +39,7 @@ export const WIRE_PALETTES = {
     canopy:   [0.74, 0.90, 1.00],
     ground:   [0.68, 0.84, 1.00],
     void:     [0.031, 0.078, 0.184],
+    frontier: [1.00, 0.80, 0.45],
   },
   amber: {
     label: 'Amber · phosphor terminal',
@@ -41,6 +48,7 @@ export const WIRE_PALETTES = {
     canopy:   [1.00, 0.86, 0.47],
     ground:   [0.96, 0.61, 0.21],
     void:     [0.035, 0.016, 0.004],
+    frontier: [0.45, 0.80, 1.00],
   },
   synth: {
     label: 'Synthwave · magenta & ice',
@@ -49,6 +57,7 @@ export const WIRE_PALETTES = {
     canopy:   [0.66, 0.40, 1.00],
     ground:   [1.00, 0.56, 0.36],
     void:     [0.055, 0.008, 0.055],
+    frontier: [0.55, 1.00, 0.70],
   },
 };
 

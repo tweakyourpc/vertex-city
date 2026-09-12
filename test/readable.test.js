@@ -7,7 +7,10 @@ import { T } from '../src/world/source.js';
 function fixture() {
   // Explicit test geometry: one rectangular mapped footprint on empty ground.
   const building={osm:'way/100',cx:3,cy:3,r:3,h:5,rings:[[[1,1],[5,1],[5,5],[1,5],[1,1]]]};
+  // flags carries provenance, so a world without it is not a world the
+  // renderer should have to guess about. Surveyed: no SIMULATED bit set.
   return {buildings:[null,building],roads:[],junctions:[],h:[0,5],type:[T.VOID,T.HOUSE],pal:[0,0],bid:[0,1],
+    flags:[0,0],
     sample(x,y){return x>=1&&x<5&&y>=1&&y<5?1:0;}};
 }
 // buildDistrict snaps its centre to a 32-cell sector grid, so a camera at

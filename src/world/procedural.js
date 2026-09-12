@@ -23,6 +23,9 @@ export class ProceduralWorld extends ChunkedWorld {
   constructor({ seed = SEED } = {}) {
     super({ size: WORLD, maxChunks: 4096 });
     this.seed = seed;
+    // 1 is the standalone city. A composite world widens it so the generated
+    // surroundings still have buildings out to the horizon.
+    this.densityScale = 1;
     // A bound, not an observation: the tallest term below is 10 + 10 + 21.
     this.maxHeight = 42;
     this.name = 'Procedural City';
@@ -66,7 +69,11 @@ export class ProceduralWorld extends ChunkedWorld {
         const ddx = ax - CENTER;
         const pdx = ax - (CENTER + 12);
 
-        const dist = Math.sqrt(ddx * ddx + ddy * ddy);
+        // Every band below is a radius from the centre. Dividing the
+        // distance stretches the whole profile at once, so a substrate can
+        // spread the same city shape over a wider area without retuning each
+        // threshold and drifting out of proportion with the others.
+        const dist = Math.sqrt(ddx * ddx + ddy * ddy) / this.densityScale;
         const rb = hash(bx, by, seed);
         const rb2 = hash(bx + 911, by + 733, seed);
         const rc = hash(ax, ay, seed);

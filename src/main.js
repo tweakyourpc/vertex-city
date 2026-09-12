@@ -6,6 +6,7 @@ import { Input } from './input.js';
 import { Hud } from './hud.js';
 import { ProceduralWorld } from './world/procedural.js';
 import { OsmWorld } from './world/osm.js';
+import { CompositeWorld } from './world/composite.js';
 import { fetchOsm } from './world/overpass.js';
 import { DEMO_BBOX, DEMO_ELEMENTS } from './world/demo-city.js';
 import { querySemanticFrame } from './spatial.js';
@@ -210,8 +211,9 @@ async function loadView(view) {
     hud.setBusy(true);
     await new Promise((r) => requestAnimationFrame(r));
     if (token !== state.token) return;
-    const world = new OsmWorld(DEMO_BBOX, DEMO_ELEMENTS, view.label, { enrich: true });
-    world.synthetic = true;
+    const extract = new OsmWorld(DEMO_BBOX, DEMO_ELEMENTS, view.label, { enrich: true });
+    extract.synthetic = true;
+    const world = new CompositeWorld(extract);
     if (token !== state.token) return;
     adoptWorld(world, { lat: DEMO_BBOX[0], lon: DEMO_BBOX[1] }, view.camera);
     state.phase = 'ready';
@@ -234,10 +236,13 @@ async function loadView(view) {
     await new Promise((r) => requestAnimationFrame(r));
     if (token !== state.token) return;
 
-    const world = new OsmWorld(view.bbox, elements, view.label);
-    if (world.roadCells.length === 0 && world.buildings.length <= 1) {
+    const extract = new OsmWorld(view.bbox, elements, view.label);
+    if (extract.roadCells.length === 0 && extract.buildings.length <= 1) {
       throw new Error('No streets in this area. Try somewhere more built up.');
     }
+    // The mapped extract stands on a generated substrate, so the city reaches
+    // the horizon instead of ending at the edge of what was downloaded.
+    const world = new CompositeWorld(extract);
     adoptWorld(world, { lat: world.lat, lon: world.lon }, view.camera);
     const stream = new OSMStream({
       initialBBox: view.bbox,
@@ -253,7 +258,10 @@ async function loadView(view) {
         if (!old?.proj) return;
         const lat = old.proj.lat(cam.y);
         const lon = old.proj.lon(cam.x);
-        const next = new OsmWorld(snapshot.bbox, snapshot.elements, view.label);
+        // Wrapped too, or the first streamed tile would swap the substrate out
+        // and the hard edge would come back the moment the world grew.
+        const next = new CompositeWorld(
+          new OsmWorld(snapshot.bbox, snapshot.elements, view.label));
         const camera = {
           x: next.proj.x(lon), y: next.proj.y(lat), z: cam.z,
           angle: cam.angle, pitch: cam.pitch,

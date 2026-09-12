@@ -1,4 +1,4 @@
-import { T, hash } from '../world/source.js';
+import { T, F, hash } from '../world/source.js';
 import { FLOOR_H } from '../config.js';
 
 /**
@@ -15,6 +15,14 @@ import { FLOOR_H } from '../config.js';
 export const STRIDE = 17;
 const PALETTE = [[.83,.76,.64],[.73,.48,.35],[.91,.86,.73],[.57,.66,.67],[.77,.68,.56],[.89,.80,.66]];
 const CORNER = [[0,0],[1,0],[1,1],[0,1]];
+/**
+ * Provenance rides in the `kind` attribute's 8s place rather than in a new
+ * vertex attribute: generated geometry is its material id plus SIM, and the
+ * shader takes it back off before switching on the material. One bit, no extra
+ * bytes per vertex, and every existing kind keeps its meaning.
+ */
+const SIM = 8;
+const simOf = (world, slot) => (world.flags?.[slot] & F.SIMULATED) ? SIM : 0;
 
 /** CPU mesh assembly is independent of the GPU, and reusable in geometry tests. */
 export class Mesh {
@@ -111,35 +119,46 @@ export function buildDistrict(world, cam, radius = 145) {
   // Read existing terrain into coarse, contiguous runs. Buildings themselves
   // are emitted from exact rings, not from these terrain samples.
   for(let y=cy-radius;y<cy+radius;y+=2) {
-    let start=cx-radius,previous=-1;
+    let start=cx-radius,previous=-1,runSim=0;
     const paint=(end,type) => {
       if(![T.WATER,T.FIELD,T.YARD,T.FOREST,T.PATH].includes(type)) return;
       const col=type===T.WATER?[.28,.55,.62]:type===T.PATH?[.74,.70,.57]:[.48,.62,.37];
-      mesh.box((start+end)/2,y+1,.002,end-start,2,.01,0,col,type===T.WATER?4:0);
+      mesh.box((start+end)/2,y+1,.002,end-start,2,.01,0,col,(type===T.WATER?4:0)+runSim);
     };
     for(let x=cx-radius;x<=cx+radius;x+=2) {
       const slot=world.sample(x,y),type=world.type[slot];
-      if(type!==previous || x===cx+radius) { if(previous>=0) paint(x,previous); start=x; previous=type; }
+      if(type!==previous || x===cx+radius) { if(previous>=0) paint(x,previous); start=x; previous=type; runSim=simOf(world,slot); }
       if((type===T.TREE||type===T.FOREST) && Math.hypot(x-cx,y-cy)<70 && hash(x,y,27)>.85) tree(mesh,x,y,Math.round(x*19+y*7));
     }
   }
-  if(world.buildings?.length>1) {
+  // Mapped footprints, drawn from their exact rings.
+  const mapped = world.buildings?.length > 1;
+  if(mapped) {
     for(const b of world.buildings) if(b && Math.hypot(b.cx-cx,b.cy-cy)<radius+b.r) building(mesh,world,b);
-  } else {
+  }
+  {
     // Build from the exact collision cells, never approximate procedural
     // buildings with different footprints. Merge row runs to keep the mesh small.
+    //
+    // This runs alongside the ring pass, not instead of it. A composite world
+    // is mapped in the middle and generated around it, so both kinds of
+    // building are in view at once; skipping this whenever an extract exists
+    // would leave the substrate's city as bare ground. `bid` says which cells a
+    // ring already owns, and those are left to the pass above rather than
+    // drawn twice.
     for(let y=Math.floor(cy-radius);y<cy+radius;y++) {
       let x=Math.floor(cx-radius);
       while(x<cx+radius) {
         const slot=world.sample(x,y),type=world.type[slot],h=world.h[slot],pal=world.pal[slot];
-        if(type!==T.HOUSE && type!==T.TOWER) { x++; continue; }
+        if((type!==T.HOUSE && type!==T.TOWER) || (mapped && world.bid[slot]!==0)) { x++; continue; }
         const start=x;
         while(++x<cx+radius) {
           const next=world.sample(x,y);
           if(world.type[next]!==type || world.h[next]!==h || world.pal[next]!==pal) break;
+          if(mapped && world.bid[next]!==0) break;
         }
         const colour=PALETTE[pal%PALETTE.length];
-        mesh.box((start+x)/2,y+.5,0,x-start,1,h,0,colour,1,pal);
+        mesh.box((start+x)/2,y+.5,0,x-start,1,h,0,colour,1+simOf(world,slot),pal);
       }
     }
   }

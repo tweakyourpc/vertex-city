@@ -59,9 +59,14 @@ uniform vec3 wireCanopy;
 uniform vec3 wireGround;
 uniform vec3 wireVoid;
 uniform vec3 sunDir;   // unit vector toward the sun, world axes
+uniform vec3 wireFrontier;
 float noise(vec2 p) { return fract(sin(dot(p, vec2(12.9898,78.233)) + mod(vSeed, 997.0)) * 437.5453); }
 void main() {
   vec3 colour = vColour;
+  // Provenance rides in kind's 8s place. Take it off before switching on the
+  // material, so every material test below reads the same as it always did.
+  float sim = step(8.0, vKind);
+  float kind = vKind - sim * 8.0;
 
   // Wireframe view. The city's real geometry, drawn as light on its own edges:
   // the layout stays surveyed while the surfaces stop pretending to be matter.
@@ -91,7 +96,7 @@ void main() {
     // tower at a distance no outline alone would survive. Measured in metres
     // off the mullion, so these stay as crisp as the outline.
     float inner = 0.0;
-    if (vKind > 0.5 && vKind < 1.5) {
+    if (kind > 0.5 && kind < 1.5) {
       vec2 g = vec2(vUv.x / 0.92, vUv.y / ${FLOOR_H.toFixed(4)});
       vec2 f = abs(fract(g) - 0.5);
       float mullion = min((0.5 - f.x) * 0.92, (0.5 - f.y) * ${FLOOR_H.toFixed(4)});
@@ -99,9 +104,9 @@ void main() {
             * (1.0 - smoothstep(55.0, 120.0, vDistance)) * 0.42;
     }
 
-    vec3 neon = vKind > 0.5 && vKind < 1.5 ? wireBuilding
-              : vKind > 3.5                ? wireWater
-              : vKind > 1.5 && vKind < 2.5 ? wireCanopy
+    vec3 neon = kind > 0.5 && kind < 1.5 ? wireBuilding
+              : kind > 3.5                ? wireWater
+              : kind > 1.5 && kind < 2.5 ? wireCanopy
               : wireGround;
     // The sun rakes the wire city. Planes turned toward it burn brighter, so
     // the real solar azimuth is legible in which faces of a block are lit, and
@@ -114,7 +119,7 @@ void main() {
     // in the scheme's own colour, so a night skyline reads as occupied rather
     // than merely unlit.
     float panes = 0.0;
-    if (vKind > 0.5 && vKind < 1.5) {
+    if (kind > 0.5 && kind < 1.5) {
       vec2 g = vec2(vUv.x / 0.92, vUv.y / ${FLOOR_H.toFixed(4)});
       vec2 p = fract(g);
       panes = step(0.62, noise(floor(g))) * (1.0 - daylight)
@@ -122,6 +127,11 @@ void main() {
             * step(0.20, p.x) * step(p.x, 0.80)
             * step(0.24, p.y) * step(p.y, 0.78);
     }
+
+    // Invented ground takes the scheme's frontier colour, so the edge of the
+    // survey is a thing you can see from a rooftop rather than a thing the
+    // renderer quietly papers over.
+    neon = mix(neon, wireFrontier, sim);
 
     float glow = max(edge, inner);
     vec3 body = colour * 0.045 * (0.35 + 0.65 * daylight);
@@ -134,7 +144,7 @@ void main() {
   float sun = max(0.0, dot(normalize(vNormal), sunDir));
   float shade = mix(0.30,0.69,daylight) + sun * mix(0.12,0.34,daylight);
   float emissive = 0.0;
-  if (vKind > 0.5 && vKind < 1.5) {
+  if (kind > 0.5 && kind < 1.5) {
     vec2 grid = vec2(vUv.x / 0.92, vUv.y / ${FLOOR_H.toFixed(4)});
     vec2 pane = fract(grid);
     float floorIndex = floor(grid.y);
@@ -159,8 +169,8 @@ void main() {
     }
     colour *= 0.89 + 0.11 * smoothstep(0.0,0.7,vUv.y);
   }
-  if (vKind > 2.5 && vKind < 3.5) emissive = 0.8 * (1.0-daylight);
-  if (vKind > 3.5) {
+  if (kind > 2.5 && kind < 3.5) emissive = 0.8 * (1.0-daylight);
+  if (kind > 3.5) {
     float ripple = sin(vUv.x*10.0+time*0.35)*sin(vUv.y*8.0-time*0.22);
     colour += ripple * 0.025;
   }
@@ -192,7 +202,7 @@ export class ReadableRenderer {
     this.movingBuffer = gl.createBuffer();
     this.attributes = ['position','normal','colour','uv','kind','seed','quad'].map(name => gl.getAttribLocation(this.program,name));
     this.uniforms = Object.fromEntries(['camera','forward','tangent','aspect','horizon','daylight','time','haze',
-      'wire','wireUnit','wireBuilding','wireWater','wireCanopy','wireGround','wireVoid','sunDir'].map(name => [name,gl.getUniformLocation(this.program,name)]));
+      'wire','wireUnit','wireBuilding','wireWater','wireCanopy','wireGround','wireVoid','sunDir','wireFrontier'].map(name => [name,gl.getUniformLocation(this.program,name)]));
     this.world = null;
     this.district = null;
     this.generation = 0;
@@ -263,6 +273,7 @@ export class ReadableRenderer {
       // The void keeps the hour. A wash of the real sky, scaled by daylight,
       // so distant geometry fades into a dawn that is actually dawn-coloured
       // while a night frontier stays the scheme's own black.
+      gl.uniform3fv(u.wireFrontier,scheme.frontier);
       gl.uniform3fv(u.wireVoid,scheme.void.map((c,i) =>
         c + light.skyBottom[i] / 255 * 0.22 * light.dayAmt));
     }
