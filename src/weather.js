@@ -199,17 +199,25 @@ export class WeatherLayer {
     return this.enabled && !!this.proj;
   }
 
+  /**
+   * Just the current temperature, for the street-context card. Empty whenever
+   * there is no reading to show, so the caller hides the field rather than
+   * printing a placeholder next to the clock.
+   */
+  tempOf(imperial = false) {
+    if (!this.enabled || !this.proj || !this.cur) return '';
+    const t = this.cur.tempC;
+    if (t == null) return '';
+    return imperial ? `${Math.round(t * 9 / 5 + 32)}°F` : `${Math.round(t)}°C`;
+  }
+
   /** A short status string for the HUD. `imperial` flips °C to °F. */
   statusOf(imperial = false, live = true) {
     if (!this.enabled) return 'OFF';
     if (!this.proj) return 'N/A';
     if (!live) return 'SIM · press 0 for live';
     if (!this.cur) return this.lastError ? 'UNAVAILABLE' : '…';
-    const t = this.cur.tempC;
-    const temp = t != null
-      ? (imperial ? Math.round(t * 9 / 5 + 32) + '°F' : Math.round(t) + '°C')
-      : '';
-    return `${this.cur.label} · ${temp}`;
+    return `${this.cur.label} · ${this.tempOf(imperial)}`;
   }
 
   /** A short status string for the HUD. */

@@ -380,6 +380,7 @@ function draw() {
   quakes.draw(screen, cam, light);
   flock.draw(screen, cam, light);
   panel.draw(screen, cam, state.world);
+  liftContextCard();
   perf.end('worldQuery');
 
   perf.start('compose');
@@ -482,6 +483,8 @@ function frame() {
       enabled: weather.enabled,
       active: weather.active,
       status: weather.statusOf(imperial, live),
+      // Live readings only: a warped clock's weather is not this moment's.
+      temp: live ? weather.tempOf(imperial) : '',
     },
     quakes: {
       enabled: quakes.enabled,
@@ -511,6 +514,39 @@ function frame() {
   }
 
   requestAnimationFrame(frame);
+}
+
+/**
+ * Keep the street-context card clear of the identify panel.
+ *
+ * The panel is drawn in the character grid, bottom-left, at a fixed 46 columns.
+ * The card is a DOM element pinned bottom-right. On a wide window they never
+ * meet, but the panel's width in CSS pixels is roughly constant while the
+ * card's left edge tracks the viewport, so below about 830px they overlap and
+ * the card covers the summary. Lift the card above the panel in exactly that
+ * case. Recomputed only when the panel's geometry changes, not every frame.
+ */
+const contextCard = { el: null, key: '' };
+function liftContextCard() {
+  if (!contextCard.el) contextCard.el = document.querySelector('.bottom-context');
+  const el = contextCard.el;
+  if (!el) return;
+  const box = panel.rect(screen);
+  const key = box ? `${box.x},${box.y},${box.w},${box.h},${screen.cols}` : '';
+  if (key === contextCard.key) return;
+  contextCard.key = key;
+
+  if (!box) { el.style.removeProperty('--panel-lift'); return; }
+  const r = canvas.getBoundingClientRect();
+  const panelRight = r.left + (box.x + box.w) * screen.cw;
+  const card = el.firstElementChild;
+  if (!card || card.getBoundingClientRect().left >= panelRight) {
+    el.style.removeProperty('--panel-lift');
+    return;
+  }
+  // Clear the panel's top edge, measured from the bottom of the canvas.
+  const lift = Math.max(0, r.height - box.y * screen.ch);
+  el.style.setProperty('--panel-lift', `${Math.round(lift)}px`);
 }
 
 /* -------------------------------- picking -------------------------------- */

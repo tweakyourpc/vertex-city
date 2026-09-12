@@ -67,6 +67,7 @@ export class Hud {
     this.loc = document.getElementById('loc');
     this.perf = document.getElementById('perf');
     this.where = document.getElementById('where');
+    this.temp = document.getElementById('temp');
     this.attrib = document.getElementById('attrib');
     this.air = document.getElementById('air');
     this.wx = document.getElementById('wx');
@@ -319,6 +320,15 @@ export class Hud {
       } else {
         this.where.textContent = '';
       }
+    }
+
+    // Temperature sits beside the clock in the street-context card. It is
+    // hidden rather than blanked so it leaves no gap in the row when the
+    // weather layer is off, unavailable, or the clock has been warped.
+    if (this.temp) {
+      const t = weather?.temp || '';
+      this.temp.textContent = t;
+      this.temp.hidden = !t;
     }
 
     const altM = cam.z * METERS_PER_CELL;
