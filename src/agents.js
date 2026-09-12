@@ -228,6 +228,18 @@ export class Traffic {
         const p = positionOnEdge(graph, edge, distance, laneOffsetForEdge(edge));
         const d2 = (p.x - cam.x) ** 2 + (p.y - cam.y) ** 2;
         if (d2 < 256 || d2 > AGENT_CULL_D2 * 0.75) continue;
+        // Nothing checked whether the spot was already occupied, so a car could
+        // be created inside another one and appear to peel out of it. Two car
+        // lengths of clear road, or try somewhere else.
+        if (kind === 'car') {
+          let taken = false;
+          for (const other of this.agents) {
+            if (other.kind !== 'car') continue;
+            const dd = (other.x - p.x) ** 2 + (other.y - p.y) ** 2;
+            if (dd < 16) { taken = true; break; }
+          }
+          if (taken) continue;
+        }
         if (kind === 'ped') {
           // Either pavement, and a walking pace rather than a driving one.
           const side = this._random() < 0.5 ? 1 : -1;
@@ -471,10 +483,20 @@ export class Traffic {
     let desired = a.targetSpd;
 
     const node = graph.nodes[edge.to];
-    if (node.signal && remaining < 8) {
+    // Stop at the crossing, not in the middle of the box. The stop line was a
+    // flat 1.2 cells before the node, which is the junction's centre, so a car
+    // held its red light parked across the crosswalk it was supposed to keep
+    // clear. district.js sets the crossing back half a carriageway plus 2.4,
+    // and its bars are 2.35 deep, so the line is behind all of that.
+    const lanes = Number.isFinite(edge.width)
+      ? edge.width : (ROAD_WIDTH_CELLS[edge.cls] ?? 3.38);
+    const stopBack = lanes / 2 + 3.7;
+    if (node.signal && remaining < stopBack + 9) {
       const group = signalGroupForIncoming(graph, node, edge);
       const state = signalState(Date.now() / 1000, group, node.id * 0.17);
-      if (state !== 'green') desired = Math.min(desired, Math.max(0, (remaining - 1.2) * 1.4));
+      if (state !== 'green') {
+        desired = Math.min(desired, Math.max(0, (remaining - stopBack) * 1.4));
+      }
     }
 
     // Simple same-lane headway. It removes overlaps without coupling cars to
@@ -539,11 +561,27 @@ export class Traffic {
         a.spd = 0;
         break;
       }
+      const prevDx = edge.dx, prevDy = edge.dy;
       a.edgeId = choices[(this._random() * choices.length) | 0];
       edge = graph.edges[a.edgeId];
       a.distance = Math.min(overflow, Math.max(0, edge.length - 0.001));
+      // Which way this turn goes, for the indicators. The cross product's sign
+      // is the side; anything near straight ahead is not a turn and shows
+      // nothing, the way a driver would not signal for a bend in the road.
+      const cross = prevDx * edge.dy - prevDy * edge.dx;
+      const dot = prevDx * edge.dx + prevDy * edge.dy;
+      a.turn = (dot > 0.82 || Math.abs(cross) < 0.22) ? 0 : (cross > 0 ? 1 : -1);
+      a.turnUntil = a.distance + 2.6;
     }
-    const p = positionOnEdge(graph, edge, a.distance, laneOffsetForEdge(edge));
+    if (a.turn && a.distance > a.turnUntil) a.turn = 0;
+    // Ease toward the centreline at each end of an edge. Holding a full lane
+    // offset to the last centimetre and then switching edges moves the car
+    // sideways in one frame and turns it on the spot; easing gives the corner
+    // an arc to follow, which is what a turn looks like.
+    const ease = Math.max(0.35, Math.min(1,
+      a.distance / 3.2, (edge.length - a.distance) / 3.2));
+    const p = positionOnEdge(graph, edge, a.distance, laneOffsetForEdge(edge) * ease);
+    const movedX = p.x - a.x, movedY = p.y - a.y;
     a.x = p.x;
     a.y = p.y;
     if (!Number.isFinite(a.renderX) || !Number.isFinite(a.renderY)) {
@@ -554,7 +592,12 @@ export class Traffic {
       a.renderX += (p.x - a.renderX) * blend;
       a.renderY += (p.y - a.renderY) * blend;
     }
-    smoothVehicleHeading(a, edge.dx, edge.dy, dt);
+    // Point along the path actually travelled, not along the edge. On the arc
+    // through a corner those differ, and steering to the edge direction is
+    // what made the turn read as an instant right angle.
+    const movedLen = Math.hypot(movedX, movedY);
+    if (movedLen > 1e-4) smoothVehicleHeading(a, movedX / movedLen, movedY / movedLen, dt);
+    else smoothVehicleHeading(a, edge.dx, edge.dy, dt);
   }
 
   /**

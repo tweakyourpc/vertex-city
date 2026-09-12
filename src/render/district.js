@@ -432,9 +432,20 @@ export function buildMovers(traffic, district, time) {
     mesh.box(x,y,.16,len,w,.28,angle,col);
     mesh.box(x,y,.44,len*.55,w*.83,.28,angle,[.23,.38,.44]);
     mesh.box(x,y,.70,len*.42,w*.78,.06,angle,col);
+    const ux=Math.cos(angle),uy=Math.sin(angle);
     for(const side of [-1,1]) for(const end of [-1,1]) {
-      const ux=Math.cos(angle),uy=Math.sin(angle);
       mesh.box(x+ux*len*.32*end-uy*w*.46*side,y+uy*len*.32*end+ux*w*.46*side,.075,.29,.12,.27,angle,[.12,.15,.16]);
+    }
+    // Indicators, on the side the car is turning, flashing about 1.5 Hz. A car
+    // that changes direction without signalling first reads as teleporting into
+    // the turn; the flash is what announces it.
+    if(car.turn) {
+      const on=Math.sin(time*9.4)>0;
+      if(on) for(const end of [-1,1]) {
+        mesh.box(x+ux*len*.42*end-uy*w*.48*car.turn,
+                 y+uy*len*.42*end+ux*w*.48*car.turn,
+                 .30,.16,.08,.10,angle,[1,.62,.10],3);
+      }
     }
   }
   if(traffic.mode===2) for(const p of traffic.agents) {

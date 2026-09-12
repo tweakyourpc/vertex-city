@@ -23,8 +23,15 @@ test('graph cars advance continuously along the lane', () => {
   assert.ok(car.distance > 2);
   assert.equal(car.x, car.distance);
   assert.equal(car.y, 0, 'single-lane one-way traffic should use the road centre');
-  assert.equal(car.hx, 1);
-  assert.equal(car.hy, 0);
+
+  // Heading follows the path actually travelled, so this car points slightly
+  // toward the lane while it converges onto it from the 0.55 it starts off by.
+  // That is the point of the change: steering to the edge direction regardless
+  // is what made cornering an instant right angle. On a straight lane, once the
+  // correction is spent, the heading settles along the road.
+  for (let i = 0; i < 40; i++) traffic._updateGraphCar(car, 0.05, [car]);
+  assert.ok(car.hx > 0.999, `heading did not settle along the lane: ${car.hx}`);
+  assert.ok(Math.abs(car.hy) < 0.02, `lane-straight travel should not yaw: ${car.hy}`);
 });
 
 test('same-lane cars slow to preserve headway', () => {
