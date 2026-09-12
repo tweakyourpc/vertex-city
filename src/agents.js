@@ -239,6 +239,10 @@ export class Traffic {
             hx: edge.dx, hy: edge.dy,
             spd: (1.25 + this._random() * 0.45) / METERS_PER_CELL,
             pal: (this._random() * 4) | 0,
+            // A stable per-person seed. Everyone was drawn in one shirt, one
+            // pair of trousers and one skin tone, because there was nothing to
+            // vary them by.
+            tint: (this._random() * 4294967296) >>> 0,
           });
           return true;
         }
@@ -417,14 +421,34 @@ export class Traffic {
       if (!arms.length) { a.distance = Math.max(0, edge.length - 0.01); break; }
       a.edgeId = arms[(this._random() * arms.length) | 0];
       edge = graph.edges[a.edgeId];
-      // Which pavement is a property of the street, so re-pick at each corner
-      // rather than carrying a side across a turn it no longer means anything on.
-      if (this._random() < 0.35) a.walkSide = -a.walkSide;
       a.distance = Math.min(overflow, Math.max(0, edge.length - 0.001));
+      // Take whichever pavement leaves the walker nearest to where they already
+      // are. Flipping sides at random put them on the far kerb in one frame: a
+      // 16 m jump where a walking step is 2 cm, which reads as vanishing and
+      // reappearing down the block. Turning a corner still moves them a little
+      // sideways, and the render smoothing below absorbs that.
+      const off = walkOffsetForEdge(edge);
+      let best = a.walkSide || 1, bestD = Infinity;
+      const ez = Math.max(0.3, Math.min(1,
+        a.distance / 2.5, (edge.length - a.distance) / 2.5));
+      for (const sd of [1, -1]) {
+        const c = positionOnEdge(graph, edge, a.distance, off * sd * ez);
+        const d = (c.x - a.x) ** 2 + (c.y - a.y) ** 2;
+        if (d < bestD) { bestD = d; best = sd; }
+      }
+      a.walkSide = best;
     }
 
+    // Ease the walker in toward the centreline near each end of an edge, so a
+    // corner is rounded rather than stepped. Two pavements meeting at a right
+    // angle put their offsets in different directions, and holding the full
+    // offset to the last centimetre teleports the walker across that gap the
+    // instant the edge changes. Easing leaves a small, smoothable step and
+    // reads as someone walking to the corner and turning.
+    const ease = Math.max(0.3, Math.min(1,
+      a.distance / 2.5, (edge.length - a.distance) / 2.5));
     const p = positionOnEdge(graph, edge, a.distance,
-      walkOffsetForEdge(edge) * (a.walkSide || 1));
+      walkOffsetForEdge(edge) * (a.walkSide || 1) * ease);
     a.x = p.x;
     a.y = p.y;
     if (!Number.isFinite(a.renderX) || !Number.isFinite(a.renderY)) {

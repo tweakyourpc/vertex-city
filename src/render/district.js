@@ -440,11 +440,34 @@ export function buildMovers(traffic, district, time) {
   if(traffic.mode===2) for(const p of traffic.agents) {
     if(p.kind!=='ped') continue;
     const x=p.renderX??p.x,y=p.renderY??p.y;
-    const walk=Math.sin(time*7+x)*.035;
-    mesh.box(x,y,.32,.20,.15,.27,0,[.38,.46,.54]);
-    mesh.box(x,y,.60,.14,.14,.14,0,[.75,.56,.40]);
-    mesh.box(x-.055,y+walk,.025,.07,.09,.30,0,[.23,.28,.32]);
-    mesh.box(x+.055,y-walk,.025,.07,.09,.30,0,[.23,.28,.32]);
+    // Face the way they are going. Every limb used to be built at angle 0, so
+    // a crowd all faced the same compass direction whatever street it was on.
+    const angle=Math.atan2(p.hy||0,p.hx||1);
+    const ux=Math.cos(angle),uy=Math.sin(angle);
+    const sx=-uy,sy=ux;                       // across the body
+
+    // One seed per person picks a skin tone and an outfit, so a pavement is a
+    // crowd rather than one figure repeated.
+    const t=p.tint>>>0;
+    const SKIN=[[.94,.78,.65],[.86,.67,.50],[.72,.52,.37],[.55,.38,.26],[.38,.26,.19],[.29,.19,.14]];
+    const SHIRT=[[.38,.46,.54],[.62,.26,.28],[.24,.40,.32],[.78,.72,.56],[.30,.32,.48],[.52,.46,.62],[.82,.56,.30],[.20,.22,.26]];
+    const LEG=[[.23,.28,.32],[.30,.26,.22],[.18,.20,.26],[.42,.40,.36],[.26,.30,.28]];
+    const skin=SKIN[t%SKIN.length];
+    const shirt=SHIRT[(t>>>3)%SHIRT.length];
+    const leg=LEG[(t>>>7)%LEG.length];
+
+    // Opposed swing: arms counter the legs, which is what makes a walk read as
+    // walking rather than sliding.
+    const phase=time*7+(t%1000)*.01;
+    const swing=Math.sin(phase)*.05;
+
+    mesh.box(x,y,.32,.20,.15,.27,angle,shirt);
+    mesh.box(x,y,.60,.14,.14,.14,angle,skin);
+    mesh.box(x+ux*swing-sx*.055,y+uy*swing-sy*.055,.025,.07,.09,.30,angle,leg);
+    mesh.box(x-ux*swing+sx*.055,y-uy*swing+sy*.055,.025,.07,.09,.30,angle,leg);
+    // Arms, swinging against the legs.
+    mesh.box(x-ux*swing-sx*.115,y-uy*swing-sy*.115,.33,.06,.07,.25,angle,shirt);
+    mesh.box(x+ux*swing+sx*.115,y+uy*swing+sy*.115,.33,.06,.07,.25,angle,shirt);
   }
   return mesh.array();
 }
