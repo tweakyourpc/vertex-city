@@ -27,7 +27,7 @@ import { CityClock, fetchTimeZone } from './clock.js';
 import { Traffic } from './agents.js';
 import { TrafficLights } from './render/trafficlights.js';
 import { RadioPlayer } from './radio.js';
-import { julianDay, sunPos, altAz } from './astro.js';
+import { julianDay, sunPos, altAz, horizonVector } from './astro.js';
 import { floorAt } from './collision.js';
 import { moveCamera } from './movement.js';
 import { PerformanceTracker } from './performance.js';
@@ -338,6 +338,11 @@ function draw() {
   const sp = altAz(sun.ra / 15, sun.dec, jd, state.site.lat, state.site.lon);
   const sunAlt = presentation.lighting === 'live' ? sp.alt : {day:35,golden:5,night:-15}[presentation.lighting];
 
+  // A lighting preset overrides how high the sun is, never where it is: the
+  // azimuth stays the site's real one, so a golden-hour study still throws its
+  // light from the direction the sun is actually in at that place and hour.
+  const sunDir = horizonVector(sunAlt, sp.az);
+
   const dayK = light.update(sunAlt);
 
   cam.hz = screen.horizon - cam.pitch;
@@ -361,7 +366,7 @@ function draw() {
   if (surfaceView) {
     try { readable.draw(state.world,cam,screen,light,traffic,t,
       { wireframe: presentation.appearance === 'wireframe',
-        palette: presentation.wirePalette }); }
+        palette: presentation.wirePalette, sunDir }); }
     catch { readable = null; setAppearance('cinematic',screen); notify('Graphics interrupted. Switched to the pixel renderer.'); }
     screen.ctx.clearRect(0,0,screen.width,screen.height);
     // Keep the canonical depth buffer for picking and data-layer occlusion,

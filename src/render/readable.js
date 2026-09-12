@@ -58,6 +58,7 @@ uniform vec3 wireWater;
 uniform vec3 wireCanopy;
 uniform vec3 wireGround;
 uniform vec3 wireVoid;
+uniform vec3 sunDir;   // unit vector toward the sun, world axes
 float noise(vec2 p) { return fract(sin(dot(p, vec2(12.9898,78.233)) + mod(vSeed, 997.0)) * 437.5453); }
 void main() {
   vec3 colour = vColour;
@@ -102,15 +103,35 @@ void main() {
               : vKind > 3.5                ? wireWater
               : vKind > 1.5 && vKind < 2.5 ? wireCanopy
               : wireGround;
+    // The sun rakes the wire city. Planes turned toward it burn brighter, so
+    // the real solar azimuth is legible in which faces of a block are lit, and
+    // the whole grid dims through dusk rather than glowing at a fixed value
+    // that makes noon and midnight identical.
+    float facing = max(0.0, dot(normalize(vNormal), sunDir));
+    neon *= 0.50 + 0.50 * daylight + 0.55 * facing * daylight;
+
+    // After dark the windows come on: the same panes the surface view lights,
+    // in the scheme's own colour, so a night skyline reads as occupied rather
+    // than merely unlit.
+    float panes = 0.0;
+    if (vKind > 0.5 && vKind < 1.5) {
+      vec2 g = vec2(vUv.x / 0.92, vUv.y / ${FLOOR_H.toFixed(4)});
+      vec2 p = fract(g);
+      panes = step(0.62, noise(floor(g))) * (1.0 - daylight)
+            * (1.0 - smoothstep(55.0, 140.0, vDistance))
+            * step(0.20, p.x) * step(p.x, 0.80)
+            * step(0.24, p.y) * step(p.y, 0.78);
+    }
+
     float glow = max(edge, inner);
     vec3 body = colour * 0.045 * (0.35 + 0.65 * daylight);
-    vec3 lit = mix(body, neon, glow) + neon * edge * 0.22;
+    vec3 lit = mix(body, neon, glow) + neon * edge * 0.22 + wireBuilding * panes * 0.50;
     float haul = smoothstep(70.0, 300.0, vDistance) * 0.80;
     gl_FragColor = vec4(mix(lit, wireVoid * 1.6, haul), 1.0);
     return;
   }
 
-  float sun = max(0.0, dot(normalize(vNormal), normalize(vec3(-0.45,-0.62,0.85))));
+  float sun = max(0.0, dot(normalize(vNormal), sunDir));
   float shade = mix(0.30,0.69,daylight) + sun * mix(0.12,0.34,daylight);
   float emissive = 0.0;
   if (vKind > 0.5 && vKind < 1.5) {
@@ -171,7 +192,7 @@ export class ReadableRenderer {
     this.movingBuffer = gl.createBuffer();
     this.attributes = ['position','normal','colour','uv','kind','seed','quad'].map(name => gl.getAttribLocation(this.program,name));
     this.uniforms = Object.fromEntries(['camera','forward','tangent','aspect','horizon','daylight','time','haze',
-      'wire','wireUnit','wireBuilding','wireWater','wireCanopy','wireGround','wireVoid'].map(name => [name,gl.getUniformLocation(this.program,name)]));
+      'wire','wireUnit','wireBuilding','wireWater','wireCanopy','wireGround','wireVoid','sunDir'].map(name => [name,gl.getUniformLocation(this.program,name)]));
     this.world = null;
     this.district = null;
     this.generation = 0;
@@ -200,7 +221,7 @@ export class ReadableRenderer {
     gl.drawArrays(gl.TRIANGLES,0,count);
   }
 
-  draw(world, cam, screen, light, traffic, time, { wireframe = false, palette } = {}) {
+  draw(world, cam, screen, light, traffic, time, { wireframe = false, palette, sunDir = [0,0,1] } = {}) {
     if (this.lost) throw new Error('Graphics context lost');
     const gl = this.gl;
     const w = screen.width, h = screen.height;
@@ -229,6 +250,7 @@ export class ReadableRenderer {
     gl.uniform1f(u.time,time%10000);
     gl.uniform3f(u.haze,light.skyBottom[0]/255,light.skyBottom[1]/255,light.skyBottom[2]/255);
     gl.uniform1f(u.wire,wireframe?1:0);
+    gl.uniform3fv(u.sunDir,sunDir);
     const scheme = wirePalette(palette);
     if (wireframe) {
       // One device pixel in world metres at unit distance. canvas.width is the
@@ -238,14 +260,21 @@ export class ReadableRenderer {
       gl.uniform3fv(u.wireWater,scheme.water);
       gl.uniform3fv(u.wireCanopy,scheme.canopy);
       gl.uniform3fv(u.wireGround,scheme.ground);
-      gl.uniform3fv(u.wireVoid,scheme.void);
+      // The void keeps the hour. A wash of the real sky, scaled by daylight,
+      // so distant geometry fades into a dawn that is actually dawn-coloured
+      // while a night frontier stays the scheme's own black.
+      gl.uniform3fv(u.wireVoid,scheme.void.map((c,i) =>
+        c + light.skyBottom[i] / 255 * 0.22 * light.dayAmt));
     }
     // The wire city hangs in its own void: a daylight gradient behind glowing
     // edges reads as a bug, not a style.
     const v = scheme.void;
-    const byte = (c,k) => Math.round(Math.min(1,c*k)*255);
+    const k = light.dayAmt;
+    const band = (scale,sky,wash) => v
+      .map((c,i) => Math.round(Math.min(255, c * scale * 255 + sky[i] * wash * k)))
+      .join(',');
     this.canvas.style.background = wireframe
-      ? `linear-gradient(rgb(${byte(v[0],0.45)},${byte(v[1],0.45)},${byte(v[2],0.45)}),rgb(${byte(v[0],1.6)},${byte(v[1],1.6)},${byte(v[2],1.6)}))`
+      ? `linear-gradient(rgb(${band(0.45,light.skyTop,0.30)}),rgb(${band(1.6,light.skyBottom,0.42)}))`
       : `linear-gradient(rgb(${light.skyTop.join(',')}),rgb(${light.skyBottom.join(',')}))`;
     this.geometry(this.staticBuffer,this.district.vertices.length/STRIDE);
     const movers = buildMovers(traffic,this.district,time);

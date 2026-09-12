@@ -47,6 +47,24 @@ export function lst(jd, lon) {
 }
 
 /** Equatorial to horizontal coordinates. `raH` in hours, everything else degrees. */
+/**
+ * A horizontal coordinate as a unit vector in world axes, pointing at the body.
+ *
+ * The world is x east, y north, z up, and azimuth is measured from north
+ * turning east, so the world bearing is (90 - az) degrees. This is the same
+ * convention `render/sky.js` projects with; the two must agree or the drawn
+ * sun and the light on the buildings will disagree about where the sun is.
+ *
+ * Below the horizon the z component is negative, which is what lets a surface
+ * shader drop the direct term at night without a separate day/night branch.
+ */
+export function horizonVector(altDeg, azDeg) {
+  const alt = altDeg * D2R;
+  const theta = (90 - azDeg) * D2R;
+  const flat = Math.cos(alt);
+  return [flat * Math.cos(theta), flat * Math.sin(theta), Math.sin(alt)];
+}
+
 export function altAz(raH, decD, jd, lat, lon) {
   const ra = raH * 15;
   const sid = lst(jd, lon) * 15;

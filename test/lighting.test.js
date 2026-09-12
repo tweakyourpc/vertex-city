@@ -10,6 +10,7 @@ import test from 'node:test';
 import { Lighting, smoothstep, dither, quantize } from '../src/render/materials.js';
 import { ProceduralWorld } from '../src/world/procedural.js';
 import { Camera } from '../src/camera.js';
+import { horizonVector } from '../src/astro.js';
 import { renderScene } from '../src/render/raycaster.js';
 import { makeScreen, asText } from './support/screen.js';
 
@@ -138,4 +139,36 @@ test('quantize holds the band across tiny changes (no flicker)', () => {
 
 test('quantize with no previous value returns the target band', () => {
   assert.equal(quantize(0.5, 8, -1), 4);
+});
+
+/**
+ * The GPU views take a sun direction rather than the fixed vector they used to
+ * hard-code. That direction has to agree with the convention `render/sky.js`
+ * projects the drawn sun with, or the sun in the sky and the light on the
+ * buildings will come from different places.
+ */
+test('the sun vector matches the azimuth convention the sky is drawn with', () => {
+  const near = (a, b) => Math.abs(a - b) < 1e-9;
+  // Azimuth is from north, turning east; the world is x east, y north, z up.
+  const [nx, ny] = horizonVector(0, 0);
+  assert.ok(near(nx, 0) && near(ny, 1), 'azimuth 0 must point north (+y)');
+  const [ex, ey] = horizonVector(0, 90);
+  assert.ok(near(ex, 1) && near(ey, 0), 'azimuth 90 must point east (+x)');
+  const [sx, sy] = horizonVector(0, 180);
+  assert.ok(near(sx, 0) && near(sy, -1), 'azimuth 180 must point south (-y)');
+  // Overhead is straight up, and every result is a unit vector.
+  assert.ok(near(horizonVector(90, 0)[2], 1));
+  for (const [alt, az] of [[0,0],[35,117],[-15,250],[89,3]]) {
+    const v = horizonVector(alt, az);
+    assert.ok(near(Math.hypot(...v), 1), `not unit length at alt ${alt} az ${az}`);
+  }
+});
+
+test('a sun below the horizon lights no upward face', () => {
+  // Night has to fall out of the geometry, so the shader needs no separate
+  // day/night branch: max(0, dot(normal, sunDir)) does it.
+  const up = [0, 0, 1];
+  const dot = (a, b) => a[0]*b[0] + a[1]*b[1] + a[2]*b[2];
+  assert.ok(dot(horizonVector(-15, 180), up) < 0, 'a set sun must not light a roof');
+  assert.ok(dot(horizonVector(35, 180), up) > 0, 'a risen sun must light a roof');
 });
