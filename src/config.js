@@ -21,9 +21,6 @@ export const HORIZON_FRAC = 0.52;      // horizon as a fraction of screen rows
  * visible with faint colour rather than absolute black. */
 export const AMBIENT_FLOOR = 0.15;
 
-/** Day brightness scale: the actual dayAmt used in lighting calculations. */
-export const DAY_SCALE = 1.0;
-
 /** Sun elevation smoothstep range: full day above +12deg, full night below -8deg,
  * with golden hour visible in between. */
 export const SUN_EARLY = -8;
@@ -144,7 +141,7 @@ export const SEED = 1337;
 
 /* ------------------------------- palettes ------------------------------- */
 
-export const GLYPH_RAMP = ' .:-=+*#%@W';
+export const GLYPH_RAMP = ' .:-=+*#%@';
 export const LIT = [
   [255, 230, 200], [200, 230, 255], [255, 200, 230], [200, 255, 220],
   [255, 220, 180], [200, 255, 230], [255, 210, 220], [200, 255, 210],

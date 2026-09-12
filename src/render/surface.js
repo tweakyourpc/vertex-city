@@ -68,8 +68,13 @@ const TIER_ORDER = ['near', 'mid', 'far'];
  * `surfaceTier` in one place. For now it returns 'mid' to keep the ground
  * identical to the pre-refactor output; the comment marks the switch.
  */
-function selectTier(d, viewAngle = 1, dayAmt = 1) {
-  return surfaceTier(d, viewAngle, dayAmt);
+function selectTier(/* d, viewAngle, dayAmt */) {
+  // return surfaceTier(d, viewAngle, dayAmt);  // <- flips LOD on
+  // Do not flip this on until the callers below actually thread d, viewAngle
+  // and dayAmt through: called with no arguments, surfaceTier sees d as
+  // undefined, every distance comparison is false, and the daylight penalty
+  // pins the whole ground to 'far' in every frame.
+  return 'mid';
 }
 
 /* ----------------------------- vocabulary ----------------------------- */

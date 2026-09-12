@@ -1,6 +1,6 @@
 import { col2str } from '../screen.js';
 import { T, F, hash } from '../world/source.js';
-import { FOG_K, GLYPH_RAMP, LIT, FACADE, AMBIENT_FLOOR, DAY_SCALE, SUN_EARLY, SUN_LATE } from '../config.js';
+import { FOG_K, GLYPH_RAMP, LIT, FACADE, AMBIENT_FLOOR, SUN_EARLY, SUN_LATE } from '../config.js';
 import { groundGlyph, groundColour, surfaceTier, SURFACE, TIER_ORDER } from './surface.js';
 
 export { GLYPH_RAMP, LIT, FACADE };
@@ -95,7 +95,6 @@ export class Lighting {
     this.haze = [0, 0, 0];
     this.skyTop = [0, 0, 0];
     this.skyBottom = [0, 0, 0];
-    this.dayScale = DAY_SCALE;
   }
 
   update(sunAlt) {
@@ -131,10 +130,9 @@ export class Lighting {
   /** Blend a colour toward the haze by fog factor `f` (1 = near, 0 = far). */
   depth(r, g, b, f) {
     const h = this.haze;
-    const a = this.dayScale;
-    return col2str(r * f * a + h[0] * (1 - f * a),
-                   g * f * a + h[1] * (1 - f * a),
-                   b * f * a + h[2] * (1 - f * a));
+    return col2str(r * f + h[0] * (1 - f),
+                   g * f + h[1] * (1 - f),
+                   b * f + h[2] * (1 - f));
   }
 
   /**
@@ -167,7 +165,7 @@ export class Lighting {
    * sun (roofs/facades facing up catch more than shaded walls).
    */
   sunTint(r, g, b, amt) {
-    const w = this.sunWarm * amt * this.dayScale;
+    const w = this.sunWarm * amt;
     if (w <= 0) return col2str(r, g, b);
     return col2str(
       r + (28 - r * 0.10) * w,
