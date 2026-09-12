@@ -76,6 +76,23 @@ void main() {
     // Kind 6 is an aircraft warning light: on for part of its cycle, off for
     // the rest, phase set by the seed so a skyline does not blink in unison.
     // It burns day and night, which is the point of it.
+    // Kind 7 is a signal lamp. Its seed packs which lamp it is, its phase
+    // group and the junction's offset, and the cycle below is the same one
+    // traffic-signals.js runs: 12 s green, 3 s amber, the rest red, with the
+    // crossing group shifted half a cycle. The two must agree, or cars will
+    // stop for a light that looks green.
+    if (kind > 6.5) {
+      float off = floor(vSeed / 8.0);
+      float rem = vSeed - off * 8.0;
+      float grp = floor(rem / 4.0);
+      float lamp = rem - grp * 4.0;
+      float phase = mod(time + off + grp * 16.0, 32.0);
+      float state = phase < 12.0 ? 2.0 : (phase < 15.0 ? 1.0 : 0.0);
+      float on = 1.0 - step(0.5, abs(state - lamp));
+      float far = 1.0 - smoothstep(110.0, 300.0, vDistance);
+      gl_FragColor = vec4(colour * (0.05 + 0.95 * on) * far, 1.0);
+      return;
+    }
     if (kind > 5.5) {
       float blink = step(0.4, sin(time * 2.2 + vSeed * 0.0063 * 6.2831));
       float far = 1.0 - smoothstep(200.0, 460.0, vDistance);

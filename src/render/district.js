@@ -96,6 +96,79 @@ function tree(mesh,x,y,seed) {
   canopy(mesh,x+.35,y-.12,1.8,.67,colour);
 }
 
+/**
+ * A marked crossing across one approach to a junction.
+ *
+ * Stripes run along the direction of traffic and repeat across the
+ * carriageway, which is what makes a crossing legible from a car: you read the
+ * bars side-on as you come up to them. Each bar is its own quad, so the
+ * wireframe view outlines it as a closed rectangle for free, and the surface
+ * view gets a flat painted marking a few millimetres above the asphalt.
+ *
+ * `ux,uy` is the road's direction, `px,py` the point on the centreline where
+ * the crossing sits, and `width` the carriageway it has to span.
+ */
+function crossing(mesh,px,py,ux,uy,width) {
+  const nx=-uy, ny=ux;                     // across the road
+  const BAR=0.62, GAP=0.46, DEPTH=2.35;    // metres, in cells
+  const half=width/2+0.12;
+  // Step out from the centreline both ways so the pattern stays centred on the
+  // road however wide it is, instead of starting at one kerb and running short.
+  for(let o=-half;o<half-BAR*0.5;o+=BAR+GAP) {
+    const a=Math.max(o,-half), b=Math.min(o+BAR,half);
+    if(b-a<0.12) continue;
+    const c=(a+b)/2, w=b-a;
+    mesh.quad([
+      [px+nx*(c-w/2)-ux*DEPTH/2, py+ny*(c-w/2)-uy*DEPTH/2, .066],
+      [px+nx*(c+w/2)-ux*DEPTH/2, py+ny*(c+w/2)-uy*DEPTH/2, .066],
+      [px+nx*(c+w/2)+ux*DEPTH/2, py+ny*(c+w/2)+uy*DEPTH/2, .066],
+      [px+nx*(c-w/2)+ux*DEPTH/2, py+ny*(c-w/2)+uy*DEPTH/2, .066],
+    ],[0,0,1],[.88,.88,.84]);
+  }
+}
+
+/**
+ * A signal head on a mast arm over the carriageway.
+ *
+ * Signals existed only as glyph columns at the four corners of a junction, so
+ * the surface views had no signals at all. A real head hangs over the road on
+ * an arm, facing the traffic it stops, which is also the only placement you can
+ * read while driving at it.
+ *
+ * The mesh is static and rebuilt only when the camera changes sector, so which
+ * lamp is lit cannot be baked in. Each lamp carries its index, its phase group
+ * and the junction's offset in `seed`, and the shader runs the same 32 second
+ * cycle `traffic-signals.js` runs. Both have to agree, or the cars will stop
+ * for a light that looks green.
+ */
+function signalMast(mesh,lamps,px,py,ux,uy,width,group,offset) {
+  const nx=-uy, ny=ux;
+  const POLE_H=2.78, ARM_Z=2.52;           // about 6.6 m and 6.0 m
+  const reach=width/2+0.9;
+  const bx=px+nx*(width/2+0.75), by=py+ny*(width/2+0.75);
+  const angle=Math.atan2(uy,ux);
+
+  mesh.box(bx,by,0,.17,.17,POLE_H,0,[.21,.25,.26]);
+  // Arm from the kerb out over the middle of the road.
+  const ax=bx-nx*reach/2, ay=by-ny*reach/2;
+  mesh.box(ax,ay,ARM_Z,reach,.12,.12,angle+Math.PI/2,[.21,.25,.26]);
+
+  // Head at the far end, facing back down the approach.
+  const hx=bx-nx*reach, hy=by-ny*reach;
+  mesh.box(hx,hy,ARM_Z-1.02,.30,.30,1.00,angle,[.13,.16,.17]);
+  const COL=[[1,.13,.10],[1,.70,.12],[.20,1,.32]];
+  for(let i=0;i<3;i++) {
+    const z=ARM_Z-0.28-i*0.30, r=0.10;
+    const fx=-ux*0.17, fy=-uy*0.17;        // just proud of the housing face
+    lamps.quad([
+      [hx+fx+nx*-r, hy+fy+ny*-r, z-r],
+      [hx+fx+nx* r, hy+fy+ny* r, z-r],
+      [hx+fx+nx* r, hy+fy+ny* r, z+r],
+      [hx+fx+nx*-r, hy+fy+ny*-r, z+r],
+    ],[-ux,-uy,0],COL[i],7,i+group*4+offset*8);
+  }
+}
+
 function frontage(mesh,a,b,height,seed,colour) {
   const dx=b[0]-a[0],dy=b[1]-a[1],len=Math.hypot(dx,dy);
   if(len < 1) return;
@@ -273,6 +346,26 @@ export function buildDistrict(world, cam, radius = 145) {
       // Sidewalk and asphalt have distinct, calm materials and real thickness.
       mesh.box(mx,my,.014,hi-lo,width+2.5,.04,angle,[.80,.79,.71]);
       mesh.box(mx,my,.056,hi-lo,width,.014,angle,foot?[.77,.74,.65]:[.32,.37,.40]);
+      // Crossings at each end of a segment that meets a junction, set back from
+      // the centre so they sit where a stop line would, not in the middle of
+      // the box. Both ends are checked because a segment can arrive at one
+      // junction and leave from another.
+      if(!foot) for(const end of [0,1]) {
+        const jx=end?b[0]:a[0], jy=end?b[1]:a[1];
+        const j=nearbyJunctions.find(n2=>Math.hypot(n2.x-jx,n2.y-jy)<2.5);
+        if(!j) continue;
+        const back=width/2+2.4;
+        const d=end?len-back:back;
+        if(d<lo||d>hi) continue;
+        const dirx=end?ux:-ux, diry=end?uy:-uy;
+        crossing(mesh,a[0]+ux*d,a[1]+uy*d,ux,uy,width);
+        // Phase group from the approach bearing, so crossing streets alternate;
+        // offset from the junction's own position, so the city does not switch
+        // in unison. Both are deterministic, which keeps the mesh stable.
+        const group=Math.abs(dirx)>Math.abs(diry)?0:1;
+        const offset=Math.abs(Math.round(j.x*7+j.y*13))%32;
+        signalMast(mesh,beacons,a[0]+ux*d,a[1]+uy*d,dirx,diry,width,group,offset);
+      }
       if(!foot) for(let d=Math.ceil(lo/4)*4;d<hi;d+=4) {
         if(nearbyJunctions.some(j=>Math.hypot(j.x-(a[0]+ux*d),j.y-(a[1]+uy*d))<width+1)) continue;
         mesh.box(a[0]+ux*d,a[1]+uy*d,.073,1.8,.065,.003,angle,[.92,.86,.61]);
@@ -308,9 +401,17 @@ export function buildDistrict(world, cam, radius = 145) {
           lights.disc(x,y,.03,3.2,[1,.82,.48],5);
         }
         if(seed%4===0) {
+          // The bench sits 1.8 cells further along the road than the point that
+          // was checked, and that new spot was never checked itself. Along a
+          // curve, past a corner, or wherever the pavement simply stops, the
+          // step lands in the carriageway and a bench is built in the road.
+          // Anything placed on the ground has to stand somewhere real.
           const bx=x+ux*1.8,by=y+uy*1.8;
-          mesh.box(bx,by,.20,.9,.32,.08,angle,[.51,.33,.20]);
-          mesh.box(bx+uy*.12,by-ux*.12,.28,.9,.07,.3,angle,[.51,.33,.20]);
+          const bs=world.sample(bx,by);
+          if(world.h[bs]<=.1 && [T.SIDEWALK,T.PATH,T.YARD].includes(world.type[bs])) {
+            mesh.box(bx,by,.20,.9,.32,.08,angle,[.51,.33,.20]);
+            mesh.box(bx+uy*.12,by-ux*.12,.28,.9,.07,.3,angle,[.51,.33,.20]);
+          }
         }
         walkers.push({x:a[0]-uy*(width/2+.5)*side,y:a[1]+ux*(width/2+.5)*side,
           ux,uy,lo:Math.max(lo,d-5),hi:Math.min(hi,d+5),seed});
