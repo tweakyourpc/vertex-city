@@ -18,7 +18,19 @@ const SHAPES = [
     cabinLength: 1.25, cabinWidth: 0.74, cabinOffset: -0.05, roofScale: 0.86 },
   { kind: 'van', length: 2.12, width: 0.86, bodyH: 0.53, height: 0.94,
     cabinLength: 1.56, cabinWidth: 0.76, cabinOffset: -0.05, roofScale: 0.92 },
+  // A city bus: long, tall, and square, with the cabin running almost its whole
+  // length. It reads as a different class of vehicle at a glance, which is most
+  // of what a bus contributes to a street.
+  { kind: 'bus', length: 4.90, width: 1.06, bodyH: 0.96, height: 1.32,
+    cabinLength: 4.30, cabinWidth: 1.00, cabinOffset: 0.06, roofScale: 0.97 },
 ];
+
+/**
+ * Draw order for the shapes above. A uniform pick over SHAPES would put a bus
+ * in every fifth parking space; buses are weighted to roughly one vehicle in
+ * twelve, which is closer to what a street actually carries.
+ */
+const SHAPE_MIX = [0,0,0,1,1,1,2,2,2,3,3,4];
 
 // Rendering is synchronous. These two scratch values avoid changing every car's
 // hidden object shape or allocating a projection wrapper for every component.
@@ -40,7 +52,7 @@ function mix32(value) {
 export function vehicleProfile(seed) {
   const a = mix32(seed || 1);
   const b = mix32(a ^ 0x9e3779b9);
-  const shape = SHAPES[a % SHAPES.length];
+  const shape = SHAPES[SHAPE_MIX[a % SHAPE_MIX.length]];
   const scale = 0.94 + ((b & 255) / 255) * 0.12;
   return Object.freeze({
     seed: seed >>> 0,

@@ -164,8 +164,11 @@ export const FACADE = [
 
 /* -------------------------------- traffic ------------------------------- */
 
-export const MAX_CARS = 26;
-export const MAX_PEDS = 30;
+// A city street should look occupied. These were tuned when agents were cheap
+// raster sprites and pedestrians barely moved; both now route the road graph,
+// and an empty Manhattan reads as a model rather than a place.
+export const MAX_CARS = 60;
+export const MAX_PEDS = 110;
 export const AGENT_CULL_D2 = 8100;     // squared cells
 
 /* ------------------------------- defaults ------------------------------- */

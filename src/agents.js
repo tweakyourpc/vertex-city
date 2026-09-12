@@ -45,6 +45,23 @@ const ROAD_WIDTH_CELLS = {
   living_street: 3.38, service: 2.11,
 };
 
+/**
+ * How far off the centreline a pedestrian walks, in cells: the far side of the
+ * carriageway plus a pavement's width.
+ *
+ * Pedestrians used to walk a raster axis, picked at random and unrelated to the
+ * street they were standing on, reversing whenever they stepped off a sidewalk
+ * cell. On a one-cell pavement, or on any OSM street that is not axis aligned,
+ * that is a reversal almost every step: they paced instead of going anywhere,
+ * covering 43 m in 30 seconds to end up 2.3 m away. Walking the same directed
+ * graph the cars use, offset onto the pavement, is what makes a walk a journey.
+ */
+export function walkOffsetForEdge(edge) {
+  const width = Number.isFinite(edge?.width)
+    ? edge.width : (ROAD_WIDTH_CELLS[edge?.cls] ?? 3.38);
+  return width * 0.5 + 0.85;
+}
+
 /** Centre one lane in each directed half of the mapped carriageway. */
 export function laneOffsetForEdge(edge) {
   const width = Number.isFinite(edge?.width)
@@ -90,8 +107,15 @@ export class Traffic {
 
   /** Developer control: 0.25..2.3 times the normal 26-car cap. */
   setDensity(scale = 1) {
-    const value = Math.max(0.25, Math.min(2.3, Number(scale) || 1));
-    this.maxCars = Math.max(1, Math.min(60, Math.round(MAX_CARS * value)));
+    // `Number(scale) || 1` turned a requested 0 into 1, because zero is falsy:
+    // asking for the emptiest streets silently gave the default ones. Only a
+    // value that is not a number should fall back.
+    const asked = Number(scale);
+    const value = Math.max(0.25, Math.min(2.3, Number.isFinite(asked) ? asked : 1));
+    // The ceiling has to stay above the default or the upper half of the range
+    // does nothing: it was a flat 60 when the default was 26, and is now scaled
+    // off MAX_CARS so "2.3x" still means 2.3x.
+    this.maxCars = Math.max(1, Math.min(MAX_CARS * 2.5, Math.round(MAX_CARS * value)));
     let cars = 0;
     for (const agent of this.agents) if (agent.kind === 'car') cars++;
     for (let i = this.agents.length - 1; i >= 0 && cars > this.maxCars; i--) {
@@ -182,7 +206,7 @@ export class Traffic {
    */
   _spawnOsm(kind, cam) {
     const world = this.world;
-    if (kind === 'car' && world.roadGraph?.edges.length) {
+    if (world.roadGraph?.edges.length) {
       const graph = world.roadGraph;
       // Build (once) a spatial index of edges so spawning picks a nearby edge
       // instead of scanning the whole graph. Cached on the world; rebuilt only
@@ -204,6 +228,20 @@ export class Traffic {
         const p = positionOnEdge(graph, edge, distance, laneOffsetForEdge(edge));
         const d2 = (p.x - cam.x) ** 2 + (p.y - cam.y) ** 2;
         if (d2 < 256 || d2 > AGENT_CULL_D2 * 0.75) continue;
+        if (kind === 'ped') {
+          // Either pavement, and a walking pace rather than a driving one.
+          const side = this._random() < 0.5 ? 1 : -1;
+          const w = positionOnEdge(graph, edge, distance,
+            walkOffsetForEdge(edge) * side);
+          this.agents.push({
+            kind, edgeId: edge.id, distance, walkSide: side,
+            x: w.x, y: w.y, renderX: w.x, renderY: w.y,
+            hx: edge.dx, hy: edge.dy,
+            spd: (1.25 + this._random() * 0.45) / METERS_PER_CELL,
+            pal: (this._random() * 4) | 0,
+          });
+          return true;
+        }
         const car = this._prepareCar({
           kind, edgeId: edge.id, distance, x: p.x, y: p.y,
           renderX: p.x, renderY: p.y,
@@ -293,6 +331,11 @@ export class Traffic {
       const dy = a.y - cam.y;
       if (dx * dx + dy * dy > AGENT_CULL_D2) { agents.splice(i, 1); continue; }
 
+      if (a.kind === 'ped' && a.edgeId !== undefined && world.roadGraph) {
+        this._updateGraphPed(a, dt);
+        continue;
+      }
+
       if (a.kind === 'car' && a.edgeId !== undefined && world.roadGraph) {
         this._prepareCar(a);
         this._updateGraphCar(a, dt, agents);
@@ -349,6 +392,50 @@ export class Traffic {
     if (this.mode === TRAFFIC.ALL) {
       for (let i = 0; i < 3; i++) if (peds < MAX_PEDS && this._spawn('ped', cam)) peds++;
     }
+  }
+
+  /**
+   * Walk the street network, on the pavement.
+   *
+   * The same directed graph the cars drive, offset to one side and taken at
+   * walking pace. At a node the walker picks any arm, including the one it
+   * arrived on, so a route wanders the way a person's does rather than
+   * repeating a loop. Crucially it keeps going: the old surface walk reversed
+   * whenever it stepped off a sidewalk cell, which on a narrow or angled
+   * pavement meant reversing continually and travelling nowhere.
+   */
+  _updateGraphPed(a, dt) {
+    const graph = this.world.roadGraph;
+    let edge = graph.edges[a.edgeId];
+    if (!edge) return;
+
+    a.distance += a.spd * dt;
+    let hops = 0;
+    while (a.distance >= edge.length && edge.length > 0 && hops++ < 4) {
+      const overflow = a.distance - edge.length;
+      const arms = graph.nodes[edge.to].outgoing;
+      if (!arms.length) { a.distance = Math.max(0, edge.length - 0.01); break; }
+      a.edgeId = arms[(this._random() * arms.length) | 0];
+      edge = graph.edges[a.edgeId];
+      // Which pavement is a property of the street, so re-pick at each corner
+      // rather than carrying a side across a turn it no longer means anything on.
+      if (this._random() < 0.35) a.walkSide = -a.walkSide;
+      a.distance = Math.min(overflow, Math.max(0, edge.length - 0.001));
+    }
+
+    const p = positionOnEdge(graph, edge, a.distance,
+      walkOffsetForEdge(edge) * (a.walkSide || 1));
+    a.x = p.x;
+    a.y = p.y;
+    if (!Number.isFinite(a.renderX) || !Number.isFinite(a.renderY)) {
+      a.renderX = p.x; a.renderY = p.y;
+    } else {
+      const blend = 1 - Math.exp(-Math.max(0, dt) * 13);
+      a.renderX += (p.x - a.renderX) * blend;
+      a.renderY += (p.y - a.renderY) * blend;
+    }
+    a.hx = edge.dx;
+    a.hy = edge.dy;
   }
 
   _updateGraphCar(a, dt, agents) {

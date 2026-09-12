@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import { laneOffsetForEdge, Traffic } from '../src/agents.js';
 import { buildRoadGraph, positionOnEdge } from '../src/world/roadgraph.js';
+import { MAX_CARS } from '../src/config.js';
 
 function straightGraph() {
   return buildRoadGraph([{
@@ -76,8 +77,14 @@ test('developer traffic seed and density controls are repeatable and bounded', (
   const first = [traffic._random(), traffic._random(), traffic._nextVehicleSeed()];
   traffic.setSeed(123);
   assert.deepEqual([traffic._random(), traffic._random(), traffic._nextVehicleSeed()], first);
-  assert.equal(traffic.setDensity(2.3), 60);
-  assert.equal(traffic.setDensity(0), 26);
+  // Derived from MAX_CARS, not written out: these asserted 60 and 26, which
+  // were that constant's value at the time, so raising the city's density
+  // failed a test about whether the control is bounded and repeatable.
+  assert.equal(traffic.setDensity(2.3), Math.round(MAX_CARS * 2.3));
+  assert.equal(traffic.setDensity(0), Math.round(MAX_CARS * 0.25));
+  // Out of range in both directions clamps rather than throwing.
+  assert.equal(traffic.setDensity(99), Math.round(MAX_CARS * 2.3));
+  assert.equal(traffic.setDensity(-5), Math.round(MAX_CARS * 0.25));
   assert.equal(traffic.setDetailMode('far'), 'far');
   assert.equal(traffic.setDetailMode('invalid'), 'far');
 });
