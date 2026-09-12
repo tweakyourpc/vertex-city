@@ -1,4 +1,4 @@
-import { FOV, FOG_FULL } from '../config.js';
+import { FOV, FOG_FULL, METERS_PER_CELL } from '../config.js';
 import { col2str } from '../screen.js';
 import { fogOf } from './materials.js';
 import { semanticCandidates } from '../spatial.js';
@@ -19,6 +19,31 @@ import { semanticCandidates } from '../spatial.js';
 const FAR = FOG_FULL * 0.7;
 const NEAR = 4;
 const SIGN_CAP = 6;
+
+/**
+ * How high the board is mounted, in cells. About 5.2 m, the usual height of a
+ * street name sign on a mast arm: clear of the tallest thing on the road.
+ *
+ * The board used to be placed a fixed four screen rows above the ground row,
+ * which is not a height at all. It kept the same apparent size at every range,
+ * so a sign a hundred metres away was drawn as large as one overhead and stood
+ * with its post on the tarmac. Projecting a real height instead makes it
+ * shrink with distance and sit above the traffic, the way the post already
+ * implies it should.
+ */
+const MOUNT = 5.2 / METERS_PER_CELL;
+
+/**
+ * Stop drawing street signs above this camera height, in cells (about 60 m).
+ * A sign is a thing you read from the street. Seen from the air it is edge-on
+ * and unreadable, and drawing it anyway pastes green boards over the city.
+ */
+const MAX_EYE = 25;
+
+/** Screen row of a point `h` cells above the ground, at range `along`. */
+function rowAt(cam, screen, along, h) {
+  return cam.hz + (cam.z - h) * screen.vscale / along;
+}
 
 const ABBREV = [
   [/\bSTREET\b/g, 'ST'], [/\bAVENUE\b/g, 'AVE'], [/\bBOULEVARD\b/g, 'BLVD'],
@@ -46,6 +71,9 @@ export class Signs {
   toggle() { this.on = !this.on; return this.on; }
 
   draw(screen, cam, world, L, env) {
+    // A street sign is read from the street. From the air it is edge-on and
+    // unreadable, and drawing it anyway lays green boards over the rooftops.
+    if (cam.z > MAX_EYE) return;
     this.drawn.clear();
     if (!this.on || !world.junctions || world.junctions.length === 0) return;
 
@@ -83,7 +111,8 @@ export class Signs {
       const halfW = along * Math.tan(FOV / 2) * 1.04;
       if (side > halfW || side < -halfW) continue;
       const col = screen.cols / 2 - (side / along) * cam.proj;
-      const row = cam.hz + cam.z * screen.vscale / along;
+      const row = rowAt(cam, screen, along, MOUNT);
+      const ground = rowAt(cam, screen, along, 0);
       if (row < 2 || row >= screen.rows - 2) continue;
 
       const names = [world.streetNames[cross.nameId]].filter(Boolean);
@@ -93,7 +122,7 @@ export class Signs {
       const score = -along
         + 0.5 * names.length
         + (this.prev.has(spatialId) ? 30 : 0);
-      cands.push({ j: spatialId, col, row, along, names, score });
+      cands.push({ j: spatialId, col, row, ground, along, names, score });
     }
 
     cands.sort((a, b) => b.score - a.score);
@@ -123,6 +152,7 @@ export class Signs {
    * away from it).
    */
   drawFacing(screen, cam, world, L, env) {
+    if (cam.z > MAX_EYE) return;
     if (!this.on || !world.junctions || world.junctions.length === 0) return;
     const fwdX = Math.cos(cam.angle);
     const fwdY = Math.sin(cam.angle);
@@ -161,7 +191,8 @@ export class Signs {
     const halfW = along * Math.tan(FOV / 2) * 1.04;
     if (side > halfW || side < -halfW) return;
     const col = screen.cols / 2 - (side / along) * cam.proj;
-    const row = cam.hz + cam.z * screen.vscale / along;
+    const row = rowAt(cam, screen, along, MOUNT);
+    const ground = rowAt(cam, screen, along, 0);
     if (row < 2 || row >= screen.rows - 2) return;
 
     const name = world.streetNames[cross.nameId];
@@ -176,10 +207,14 @@ export class Signs {
 
     const label = short(name);
     const w = label.length + 2;
+    // The board stays a legible three rows: it is text, and a board scaled
+    // strictly by range is unreadable before it is out of sight. Where it is
+    // mounted is real; how large the lettering draws is a concession to being
+    // able to read it at all.
     const boardH = 3;                 // top/bottom rule + one name line
-    const postTop = Math.round(row) - boardH - 1;
-    const postBot = Math.round(row);
-    if (postTop < 1 || postBot >= screen.rows) return;
+    const postTop = Math.round(row) - boardH;
+    const postBot = Math.round(ground);
+    if (postTop < 1 || postTop >= screen.rows) return;
 
     const f = Math.max(0.12, fogOf(along));
     const board = col2str(18, 110, 46);          // green board
@@ -232,10 +267,12 @@ export class Signs {
     const lines = c.names.map(short);
     const w = Math.max(...lines.map((s) => s.length)) + 2;
     const boardH = lines.length + 2;             // top/bottom rule + lines
-    const postTop = Math.round(c.row) - boardH - 1;
-    const postBot = Math.round(c.row);
+    // c.row is the mount, c.ground the road under it, so the post spans the
+    // real distance between them instead of a fixed handful of screen rows.
+    const postTop = Math.round(c.row) - boardH;
+    const postBot = Math.round(c.ground);
 
-    if (postTop < 1 || postBot >= screen.rows) return false;
+    if (postTop < 1 || postTop >= screen.rows) return false;
 
     const f = Math.max(0.12, fogOf(c.along));
     const board = col2str(28, 34, 44);
