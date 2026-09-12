@@ -1,5 +1,5 @@
 import { ReadableRenderer } from './render/readable.js';
-import { presentation, bindExperience, setAppearance, notify } from './experience.js';
+import { presentation, bindExperience, setAppearance, notify, GEOMETRY_VIEWS } from './experience.js';
 import { Screen, MODE as RENDER } from './screen.js';
 import { Camera } from './camera.js';
 import { Input } from './input.js';
@@ -290,7 +290,7 @@ function update(dt, live) {
   for (let i = input.takeTaps('n'); i > 0; i--) signs.toggle();
   for (let i = input.takeTaps('l'); i > 0; i--) labels.cycle();
   for (let i = input.takeTaps('b'); i > 0; i--) {
-    const next = { readable: 'ascii', ascii: 'cinematic', cinematic: readable ? 'readable' : 'ascii' }[presentation.appearance];
+    const next = { readable: 'wireframe', wireframe: 'ascii', ascii: 'cinematic', cinematic: readable ? 'readable' : 'ascii' }[presentation.appearance];
     setAppearance(next,screen);
     screen.setRenderScale(1);
   }
@@ -357,9 +357,10 @@ function draw() {
   // labels, signals, and landmarks all draw candidates from a single query
   // instead of each rebuilding its own box from cam every frame.
   const semantic = querySemanticFrame(state.world, cam);
-  const surfaceView = presentation.appearance === 'readable' && readable;
+  const surfaceView = GEOMETRY_VIEWS.has(presentation.appearance) && readable;
   if (surfaceView) {
-    try { readable.draw(state.world,cam,screen,light,traffic,t); }
+    try { readable.draw(state.world,cam,screen,light,traffic,t,
+      { wireframe: presentation.appearance === 'wireframe' }); }
     catch { readable = null; setAppearance('cinematic',screen); notify('Graphics interrupted. Switched to the pixel renderer.'); }
     screen.ctx.clearRect(0,0,screen.width,screen.height);
     // Keep the canonical depth buffer for picking and data-layer occlusion,
@@ -451,7 +452,7 @@ function frame() {
   if (clicked) handleClick(clicked);
 
   perf.endFrame(performance.now());
-  if (screen.mode === RENDER.CINEMATIC && presentation.appearance !== 'readable') {
+  if (screen.mode === RENDER.CINEMATIC && !GEOMETRY_VIEWS.has(presentation.appearance)) {
     if (document.visibilityState === 'visible') {
       if (quality.sample(dt * 1000)) screen.setRenderScale(quality.scale);
     } else {

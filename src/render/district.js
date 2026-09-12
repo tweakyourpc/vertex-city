@@ -1,14 +1,32 @@
 import { T, hash } from '../world/source.js';
 import { FLOOR_H } from '../config.js';
 
-export const STRIDE = 13;
+/**
+ * Vertex layout: position(3) normal(3) colour(3) uv(2) kind(1) seed(1)
+ * corner(2) extent(2).
+ *
+ * `corner` is the vertex's parametric position in its own quad and `extent`
+ * that quad's size in metres, both constant across the quad's two triangles.
+ * Together they let a fragment measure its distance to the quad's border, so
+ * the wireframe view can outline real faces instead of the triangulation
+ * diagonal every naive barycentric wireframe exposes. Appended last so the
+ * older attribute offsets, and the tests that index them, are unchanged.
+ */
+export const STRIDE = 17;
 const PALETTE = [[.83,.76,.64],[.73,.48,.35],[.91,.86,.73],[.57,.66,.67],[.77,.68,.56],[.89,.80,.66]];
+const CORNER = [[0,0],[1,0],[1,1],[0,1]];
 
 /** CPU mesh assembly is independent of the GPU, and reusable in geometry tests. */
 export class Mesh {
   constructor() { this.data = []; }
   quad(points, normal, colour, kind = 0, seed = 0, uv = [[0,0],[1,0],[1,1],[0,1]]) {
-    for (const i of [0,1,2,0,2,3]) this.data.push(...points[i], ...normal, ...colour, ...uv[i], kind, seed);
+    const span = (a, b) => Math.hypot(b[0]-a[0], b[1]-a[1], b[2]-a[2]);
+    const ew = span(points[0], points[1]);
+    const eh = span(points[0], points[3]);
+    for (const i of [0,1,2,0,2,3]) {
+      this.data.push(...points[i], ...normal, ...colour, ...uv[i], kind, seed,
+        CORNER[i][0], CORNER[i][1], ew, eh);
+    }
   }
   box(x, y, z, w, d, h, angle, colour, kind = 0, seed = 0) {
     const c = Math.cos(angle), s = Math.sin(angle);

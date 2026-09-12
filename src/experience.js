@@ -63,7 +63,7 @@ export function bindExperience({ input, cam, state, screen, layers, signs, label
     const compass=['N','NE','E','SE','S','SW','W','NW'];
     $('heading').textContent=compass[Math.round(bearing/45)%8]+' '+Math.round(bearing)+'°';
     $('flight-toggle').textContent=cam.movement==='fly'?'↓ Walk':'↑ Fly';
-    $('render-status').textContent={readable:'CITYSCAPE',ascii:'ASCII',cinematic:'PIXEL'}[presentation.appearance];
+    $('render-status').textContent={readable:'CITYSCAPE',wireframe:'WIREFRAME',ascii:'ASCII',cinematic:'PIXEL'}[presentation.appearance];
     $('appearance').value=presentation.appearance;
     let count=0;
     for(const control of document.querySelectorAll('[data-layer]')) { control.checked=layers[control.dataset.layer].enabled;if(control.checked)count++; }
@@ -72,8 +72,11 @@ export function bindExperience({ input, cam, state, screen, layers, signs, label
     $('traffic-mode').value=String(traffic.mode);
   };
 }
+/** Views drawn by the WebGL surface renderer rather than the character grid. */
+export const GEOMETRY_VIEWS = new Set(['readable','wireframe']);
+
 export function setAppearance(value, screen) {
   presentation.appearance=value;
   screen.setMode(value==='ascii'?0:2);
-  $('geometry').hidden=value!=='readable';
+  $('geometry').hidden=!GEOMETRY_VIEWS.has(value);
 }
