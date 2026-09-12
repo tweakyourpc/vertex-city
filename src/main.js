@@ -360,7 +360,8 @@ function draw() {
   const surfaceView = GEOMETRY_VIEWS.has(presentation.appearance) && readable;
   if (surfaceView) {
     try { readable.draw(state.world,cam,screen,light,traffic,t,
-      { wireframe: presentation.appearance === 'wireframe' }); }
+      { wireframe: presentation.appearance === 'wireframe',
+        palette: presentation.wirePalette }); }
     catch { readable = null; setAppearance('cinematic',screen); notify('Graphics interrupted. Switched to the pixel renderer.'); }
     screen.ctx.clearRect(0,0,screen.width,screen.height);
     // Keep the canonical depth buffer for picking and data-layer occlusion,

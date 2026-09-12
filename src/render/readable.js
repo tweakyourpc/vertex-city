@@ -1,5 +1,6 @@
 import { buildDistrict, buildMovers, STRIDE } from './district.js';
 import { FOV, FLOOR_H } from '../config.js';
+import { wirePalette } from './palettes.js';
 
 const vertexSource = `
 attribute vec3 position;
@@ -51,6 +52,12 @@ varying float vSeed;
 varying float vDistance;
 varying vec4 vQuad;
 uniform float wire;
+uniform float wireUnit;    // world metres per screen pixel, at unit distance
+uniform vec3 wireBuilding;
+uniform vec3 wireWater;
+uniform vec3 wireCanopy;
+uniform vec3 wireGround;
+uniform vec3 wireVoid;
 float noise(vec2 p) { return fract(sin(dot(p, vec2(12.9898,78.233)) + mod(vSeed, 997.0)) * 437.5453); }
 void main() {
   vec3 colour = vColour;
@@ -65,30 +72,41 @@ void main() {
     vec2 toEdge = min(metres, vQuad.zw - metres);
     float border = min(vQuad.z > 0.01 ? toEdge.x : 1e9,
                        vQuad.w > 0.01 ? toEdge.y : 1e9);
-    // Widen with range so a far edge stays a line instead of dropping out
-    // between samples, which is what makes a naive wireframe crawl.
-    float width = 0.05 + vDistance * 0.0045;
-    float edge = 1.0 - smoothstep(width * 0.45, width, border);
+
+    // One screen pixel, expressed in world metres at this fragment's range.
+    // A width fixed in metres is thick underfoot and gone at distance; scaling
+    // it with range is what keeps a line one pixel wide everywhere. The
+    // projection scales x and y by the same factor, so this is isotropic.
+    // Each quad draws inward from its own border, so a shared edge is lit from
+    // both sides and reads at twice this. Sized for about two pixels there and
+    // one on a silhouette. vDistance is euclidean where the projection divides
+    // by depth, so lines run up to a fifth wider at the frame's edge than at
+    // its centre; smooth across the frame, and cheaper than another varying.
+    float unit = wireUnit * vDistance;
+    float core = unit * 0.30;
+    float edge = 1.0 - smoothstep(core, core + unit * 0.65, border);
 
     // Facades carry their own floor and window grid, so a tower reads as a
-    // tower at a distance no outline alone would survive.
+    // tower at a distance no outline alone would survive. Measured in metres
+    // off the mullion, so these stay as crisp as the outline.
     float inner = 0.0;
     if (vKind > 0.5 && vKind < 1.5) {
       vec2 g = vec2(vUv.x / 0.92, vUv.y / ${FLOOR_H.toFixed(4)});
       vec2 f = abs(fract(g) - 0.5);
-      inner = smoothstep(0.40, 0.485, max(f.x, f.y))
-            * (1.0 - smoothstep(45.0, 105.0, vDistance)) * 0.38;
+      float mullion = min((0.5 - f.x) * 0.92, (0.5 - f.y) * ${FLOOR_H.toFixed(4)});
+      inner = (1.0 - smoothstep(core, core + unit * 0.65, mullion))
+            * (1.0 - smoothstep(55.0, 120.0, vDistance)) * 0.42;
     }
 
-    vec3 neon = vKind > 0.5 && vKind < 1.5 ? vec3(0.30, 0.95, 1.00)
-              : vKind > 3.5                ? vec3(0.22, 0.58, 1.00)
-              : vKind > 1.5 && vKind < 2.5 ? vec3(0.45, 1.00, 0.62)
-              : vec3(1.00, 0.71, 0.24);
+    vec3 neon = vKind > 0.5 && vKind < 1.5 ? wireBuilding
+              : vKind > 3.5                ? wireWater
+              : vKind > 1.5 && vKind < 2.5 ? wireCanopy
+              : wireGround;
     float glow = max(edge, inner);
     vec3 body = colour * 0.045 * (0.35 + 0.65 * daylight);
-    vec3 lit = mix(body, neon, glow) + neon * edge * 0.40;
-    float haul = smoothstep(70.0, 300.0, vDistance) * 0.72;
-    gl_FragColor = vec4(mix(lit, haze * 0.18, haul), 1.0);
+    vec3 lit = mix(body, neon, glow) + neon * edge * 0.22;
+    float haul = smoothstep(70.0, 300.0, vDistance) * 0.80;
+    gl_FragColor = vec4(mix(lit, wireVoid * 1.6, haul), 1.0);
     return;
   }
 
@@ -152,7 +170,8 @@ export class ReadableRenderer {
     this.staticBuffer = gl.createBuffer();
     this.movingBuffer = gl.createBuffer();
     this.attributes = ['position','normal','colour','uv','kind','seed','quad'].map(name => gl.getAttribLocation(this.program,name));
-    this.uniforms = Object.fromEntries(['camera','forward','tangent','aspect','horizon','daylight','time','haze','wire'].map(name => [name,gl.getUniformLocation(this.program,name)]));
+    this.uniforms = Object.fromEntries(['camera','forward','tangent','aspect','horizon','daylight','time','haze',
+      'wire','wireUnit','wireBuilding','wireWater','wireCanopy','wireGround','wireVoid'].map(name => [name,gl.getUniformLocation(this.program,name)]));
     this.world = null;
     this.district = null;
     this.generation = 0;
@@ -181,7 +200,7 @@ export class ReadableRenderer {
     gl.drawArrays(gl.TRIANGLES,0,count);
   }
 
-  draw(world, cam, screen, light, traffic, time, { wireframe = false } = {}) {
+  draw(world, cam, screen, light, traffic, time, { wireframe = false, palette } = {}) {
     if (this.lost) throw new Error('Graphics context lost');
     const gl = this.gl;
     const w = screen.width, h = screen.height;
@@ -210,10 +229,23 @@ export class ReadableRenderer {
     gl.uniform1f(u.time,time%10000);
     gl.uniform3f(u.haze,light.skyBottom[0]/255,light.skyBottom[1]/255,light.skyBottom[2]/255);
     gl.uniform1f(u.wire,wireframe?1:0);
+    const scheme = wirePalette(palette);
+    if (wireframe) {
+      // One device pixel in world metres at unit distance. canvas.width is the
+      // backing store, so the line is a real pixel rather than a CSS one.
+      gl.uniform1f(u.wireUnit,2*Math.tan(FOV/2)/Math.max(1,this.canvas.width));
+      gl.uniform3fv(u.wireBuilding,scheme.building);
+      gl.uniform3fv(u.wireWater,scheme.water);
+      gl.uniform3fv(u.wireCanopy,scheme.canopy);
+      gl.uniform3fv(u.wireGround,scheme.ground);
+      gl.uniform3fv(u.wireVoid,scheme.void);
+    }
     // The wire city hangs in its own void: a daylight gradient behind glowing
     // edges reads as a bug, not a style.
+    const v = scheme.void;
+    const byte = (c,k) => Math.round(Math.min(1,c*k)*255);
     this.canvas.style.background = wireframe
-      ? `linear-gradient(rgb(3,7,12),rgb(${Math.round(light.skyBottom[0]*0.10)},${Math.round(light.skyBottom[1]*0.13)},${Math.round(light.skyBottom[2]*0.18)}))`
+      ? `linear-gradient(rgb(${byte(v[0],0.45)},${byte(v[1],0.45)},${byte(v[2],0.45)}),rgb(${byte(v[0],1.6)},${byte(v[1],1.6)},${byte(v[2],1.6)}))`
       : `linear-gradient(rgb(${light.skyTop.join(',')}),rgb(${light.skyBottom.join(',')}))`;
     this.geometry(this.staticBuffer,this.district.vertices.length/STRIDE);
     const movers = buildMovers(traffic,this.district,time);

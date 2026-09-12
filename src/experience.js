@@ -1,5 +1,9 @@
+import { WIRE_PALETTES, DEFAULT_WIRE_PALETTE } from './render/palettes.js';
+
 /** The v3 controls: geography, visual style, and data layers stay independent. */
-export const presentation = { appearance: 'readable', lighting: 'day' };
+export const presentation = {
+  appearance: 'readable', lighting: 'day', wirePalette: DEFAULT_WIRE_PALETTE,
+};
 const $ = id => document.getElementById(id);
 let noticeTimer;
 export function notify(message) {
@@ -34,6 +38,19 @@ export function bindExperience({ input, cam, state, screen, layers, signs, label
   window.addEventListener('keydown',event => { if(event.key==='Escape'){close();guide(false);} });
   $('appearance').onchange = () => setAppearance($('appearance').value,screen);
   $('lighting').onchange = () => {presentation.lighting=$('lighting').value;};
+  // Built from the palette table rather than written out in the markup, so a
+  // new scheme is one entry in palettes.js and appears here on its own.
+  $('wire-palette').append(...Object.entries(WIRE_PALETTES).map(([value,scheme]) => {
+    const option=document.createElement('option');
+    option.value=value; option.textContent=scheme.label;
+    return option;
+  }));
+  $('wire-palette').value=presentation.wirePalette;
+  $('wire-palette').onchange = () => {
+    presentation.wirePalette=$('wire-palette').value;
+    // Choosing a scheme is how someone asks to see it.
+    if(presentation.appearance!=='wireframe') setAppearance('wireframe',screen);
+  };
   for(const control of document.querySelectorAll('[data-layer]')) {
     control.onchange = () => {
       const layer=layers[control.dataset.layer];
@@ -65,6 +82,7 @@ export function bindExperience({ input, cam, state, screen, layers, signs, label
     $('flight-toggle').textContent=cam.movement==='fly'?'↓ Walk':'↑ Fly';
     $('render-status').textContent={readable:'CITYSCAPE',wireframe:'WIREFRAME',ascii:'ASCII',cinematic:'PIXEL'}[presentation.appearance];
     $('appearance').value=presentation.appearance;
+    $('wire-palette').value=presentation.wirePalette;
     let count=0;
     for(const control of document.querySelectorAll('[data-layer]')) { control.checked=layers[control.dataset.layer].enabled;if(control.checked)count++; }
     $('layer-count').textContent=count;
