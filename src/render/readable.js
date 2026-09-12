@@ -73,6 +73,15 @@ void main() {
   // ground it lands on instead of covering it. uv.x runs 0 at a disc's centre
   // to 1 at its rim, which gives the falloff without a texture.
   if (lightPass > 0.5) {
+    // Kind 6 is an aircraft warning light: on for part of its cycle, off for
+    // the rest, phase set by the seed so a skyline does not blink in unison.
+    // It burns day and night, which is the point of it.
+    if (kind > 5.5) {
+      float blink = step(0.4, sin(time * 2.2 + vSeed * 0.0063 * 6.2831));
+      float far = 1.0 - smoothstep(200.0, 460.0, vDistance);
+      gl_FragColor = vec4(colour * blink * far, 1.0);
+      return;
+    }
     float fall = 1.0 - vUv.x;
     fall *= fall;
     float far = 1.0 - smoothstep(90.0, 240.0, vDistance);
@@ -213,6 +222,7 @@ export class ReadableRenderer {
     this.staticBuffer = gl.createBuffer();
     this.movingBuffer = gl.createBuffer();
     this.lightBuffer = gl.createBuffer();
+    this.beaconBuffer = gl.createBuffer();
     this.attributes = ['position','normal','colour','uv','kind','seed','quad'].map(name => gl.getAttribLocation(this.program,name));
     this.uniforms = Object.fromEntries(['camera','forward','tangent','aspect','horizon','daylight','time','haze',
       'wire','wireUnit','wireBuilding','wireWater','wireCanopy','wireGround','wireVoid','sunDir','wireFrontier','lightPass'].map(name => [name,gl.getUniformLocation(this.program,name)]));
@@ -258,6 +268,7 @@ export class ReadableRenderer {
       this.generation++;
       this.upload(this.staticBuffer,this.district.vertices,gl.STATIC_DRAW);
       this.upload(this.lightBuffer,this.district.lights,gl.STATIC_DRAW);
+      this.upload(this.beaconBuffer,this.district.beacons,gl.STATIC_DRAW);
     }
     gl.viewport(0,0,this.canvas.width,this.canvas.height);
     gl.clearColor(0,0,0,0);
@@ -311,12 +322,15 @@ export class ReadableRenderer {
     // does not shine through a wall, but nothing writes depth: overlapping
     // pools should sum rather than occlude one another.
     const lights = this.district.lights;
-    if (lights.length && light.dayAmt < 0.999) {
+    const beacons = this.district.beacons;
+    const pools = lights.length && light.dayAmt < 0.999;
+    if (pools || beacons.length) {
       gl.uniform1f(u.lightPass,1);
       gl.enable(gl.BLEND);
       gl.blendFunc(gl.ONE,gl.ONE);
       gl.depthMask(false);
-      this.geometry(this.lightBuffer,lights.length/STRIDE);
+      if (pools) this.geometry(this.lightBuffer,lights.length/STRIDE);
+      if (beacons.length) this.geometry(this.beaconBuffer,beacons.length/STRIDE);
       gl.depthMask(true);
       gl.disable(gl.BLEND);
       gl.uniform1f(u.lightPass,0);

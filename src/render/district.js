@@ -83,7 +83,13 @@ function canopy(mesh,x,y,z,radius,colour) {
   }
 }
 function tree(mesh,x,y,seed) {
-  mesh.disc(x+.30,y-.25,.078,.85,[.29,.34,.27]);
+  // A contact shadow directly under the canopy, not an offset one. The offset
+  // was fixed at (+0.30, -0.25) regardless of where the sun was, so every tree
+  // in the city threw its shadow the same way at every hour, including at
+  // midnight. Centred is the one placement that is never contradicted by the
+  // sun: a real cast shadow has to be recomputed as the sun moves, and this
+  // mesh is only rebuilt when the camera changes sector.
+  mesh.disc(x,y,.078,.80,[.29,.34,.27]);
   mesh.box(x,y,.02,.13,.13,1.6,0,[.36,.29,.21]);
   const colour=[.29+hash(seed,1,3)*.05,.43+hash(seed,2,3)*.09,.26];
   canopy(mesh,x,y,2.05,.95,colour);
@@ -187,7 +193,7 @@ export function buildDistrict(world, cam, radius = 145) {
   // pass, because a light has to brighten the ground it falls on rather than
   // replace it: as one opaque disc the pool hid the kerb, the markings and the
   // planting it was supposed to illuminate.
-  const mesh=new Mesh(), lights=new Mesh(), walkers=[];
+  const mesh=new Mesh(), lights=new Mesh(), beacons=new Mesh(), walkers=[];
   const cx=Math.floor(cam.x/32)*32+16,cy=Math.floor(cam.y/32)*32+16;
   const nearbyJunctions=(world.junctions||[]).filter(j=>Math.hypot(j.x-cx,j.y-cy)<radius+15);
   mesh.box(cx,cy,-.10,radius*2.8,radius*2.8,.1,0,[.70,.71,.65]);
@@ -225,6 +231,15 @@ export function buildDistrict(world, cam, radius = 145) {
       let x=Math.floor(cx-radius);
       while(x<cx+radius) {
         const slot=world.sample(x,y),type=world.type[slot],h=world.h[slot],pal=world.pal[slot];
+        // Aircraft warning lights exist in the world for every building over
+        // 25 cells, mapped or generated, and the character renderer has always
+        // blinked them. The surface renderer never read the flag, so the red
+        // lights simply went missing the moment the view changed. Each is its
+        // own tiny mesh at roof height, phase-shifted by the cell so a skyline
+        // does not blink in unison.
+        if(world.flags?.[slot] & F.BEACON) {
+          beacons.box(x+.5,y+.5,h,.5,.5,.34,0,[1,.12,.10],6,(x*73+y*31)%997);
+        }
         if((type!==T.HOUSE && type!==T.TOWER) || (mapped && world.bid[slot]!==0)) { x++; continue; }
         const start=x;
         while(++x<cx+radius) {
@@ -302,7 +317,7 @@ export function buildDistrict(world, cam, radius = 145) {
       }
     }
   }
-  return { vertices:mesh.array(),lights:lights.array(),walkers,cx,cy };
+  return { vertices:mesh.array(),lights:lights.array(),beacons:beacons.array(),walkers,cx,cy };
 }
 
 export function buildMovers(traffic, district, time) {
