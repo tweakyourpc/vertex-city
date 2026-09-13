@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { Mesh, buildDistrict, buildMovers, STRIDE } from '../src/render/district.js';
+import { Mesh, buildDistrict, buildMovers, triangulate, STRIDE } from '../src/render/district.js';
 import { Lighting } from '../src/render/materials.js';
 import { T } from '../src/world/source.js';
 import { ProceduralWorld } from '../src/world/procedural.js';
@@ -129,4 +129,80 @@ test('road markings sit above the road surface, never inside it', () => {
       `z=${roadTop.toFixed(4)}, which is what makes paint z-fight with tarmac`);
   }
   assert.ok(checked >= 2, `only ${checked} kinds of marking found; the sweep is not covering them`);
+});
+
+/**
+ * A roof may not invent geometry the footprint does not have.
+ *
+ * Ear clipping a ring that crosses itself produces triangles outside the
+ * building altogether, which renders as a slab of roof lying across the street
+ * beside it. OSM ways also carry consecutive duplicate nodes, which stalled the
+ * clipper partway and left half a roof missing. Neither is a judgement about
+ * appearance: a roof either covers its own footprint or it is wrong.
+ */
+test('a roof covers its footprint exactly, or is not built at all', () => {
+  const area = (a,b,c) => Math.abs((b[0]-a[0])*(c[1]-a[1]) - (b[1]-a[1])*(c[0]-a[0]))/2;
+  const shoelace = (r) => {
+    let s = 0;
+    for (let i = 0; i < r.length-1; i++) s += r[i][0]*r[i+1][1] - r[i+1][0]*r[i][1];
+    return Math.abs(s)/2;
+  };
+  const covered = (ring) => triangulate(ring).reduce((s,[a,b,c]) => s + area(a,b,c), 0);
+
+  // Rings with a real interior must be covered completely.
+  for (const [name, ring] of Object.entries({
+    rectangle: [[0,0],[8,0],[8,4],[0,4],[0,0]],
+    'L-shaped': [[0,0],[6,0],[6,2],[2,2],[2,6],[0,6],[0,0]],
+    'duplicate nodes': [[0,0],[4,0],[4,0],[4,4],[0,4],[0,0]],
+    'collinear nodes': [[0,0],[2,0],[4,0],[6,0],[6,4],[0,4],[0,0]],
+  })) {
+    const want = shoelace(ring);
+    const got = covered(ring);
+    assert.ok(Math.abs(got - want) < want * 0.02,
+      `${name}: covered ${got.toFixed(2)} of ${want.toFixed(2)}`);
+  }
+
+  // A ring that crosses itself has no interior to cover, so nothing is built.
+  const bowtie = [[0,0],[6,0],[0,4],[6,4],[0,0]];
+  assert.equal(triangulate(bowtie).length, 0,
+    'a self-intersecting ring must produce no roof rather than one beside the building');
+
+  // And nothing produced may lie outside the ring that asked for it.
+  const inside = (p, ring) => {
+    let c = false;
+    for (let i = 0, j = ring.length-2; i < ring.length-1; j = i++) {
+      const a = ring[i], b = ring[j];
+      if (((a[1] > p[1]) !== (b[1] > p[1])) &&
+          (p[0] < (b[0]-a[0])*(p[1]-a[1])/(b[1]-a[1]) + a[0])) c = !c;
+    }
+    return c;
+  };
+  const concave = [[0,0],[6,0],[6,2],[2,2],[2,6],[0,6],[0,0]];
+  for (const [a,b,c] of triangulate(concave)) {
+    if (area(a,b,c) < 1e-9) continue;
+    const centre = [(a[0]+b[0]+c[0])/3, (a[1]+b[1]+c[1])/3];
+    assert.ok(inside(centre, concave),
+      `a roof triangle centred at ${centre.map(v=>v.toFixed(2))} lies outside its footprint`);
+  }
+});
+
+/**
+ * A roof is not a facade. The material guard tested `kind === 1` exactly, but a
+ * generated building carries its provenance bit as well, so its top kept the
+ * facade material and the shader painted window bands flat across the roof.
+ */
+test('generated roofs are not given the facade material', () => {
+  const SIM = 8;
+  for (const wallKind of [1, 1 + SIM]) {
+    const m = new Mesh();
+    m.box(0, 0, 0, 2, 2, 5, 0, [0.5,0.5,0.5], wallKind, 0);
+    const d = m.array();
+    const roofKind = d[d.length - STRIDE + 11];
+    const material = roofKind >= SIM ? roofKind - SIM : roofKind;
+    assert.notEqual(material, 1,
+      `a wall of kind ${wallKind} produced a roof reading as facade material`);
+    if (wallKind >= SIM) {
+      assert.ok(roofKind >= SIM, 'the roof must keep its provenance bit');
+    }
+  }
 });

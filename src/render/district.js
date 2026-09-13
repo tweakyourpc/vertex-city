@@ -79,7 +79,13 @@ export class Mesh {
       this.quad([p(...a,0),p(...b,0),p(...b,h),p(...a,h)], [c*nx-s*ny,s*nx+c*ny,0], colour, kind, seed,
         [[0,z],[length,z],[length,z+h],[0,z+h]]);
     }
-    this.quad(corners.map(a => p(...a,h)), [0,0,1], colour, kind === 1 ? 0 : kind, seed);
+    // A roof is not a facade. The test was `kind === 1`, an exact match, but a
+    // generated building carries 1 + SIM, so its top kept the facade material
+    // and the shader painted window bands and floor lines flat across the roof.
+    // Compare the material, not the material plus its provenance bit.
+    const material = kind >= SIM ? kind - SIM : kind;
+    const roofKind = material === 1 ? (kind - 1) : kind;
+    this.quad(corners.map(a => p(...a,h)), [0,0,1], colour, roofKind, seed);
   }
   disc(x,y,z,r,colour, kind=0) {
     for(let i=0;i<12;i++) {
@@ -352,12 +358,32 @@ function frontage(mesh,a,b,height,seed,colour) {
  * which loses a roof rather than emitting scrambled geometry.
  */
 export function triangulate(ring) {
-  const pts = ring.slice();
+  // Drop repeated points before anything else. OSM ways carry consecutive
+  // duplicates often enough, and an ear clipper handed one stalls partway and
+  // returns half a roof.
+  const pts = [];
+  for (const p of ring) {
+    const last = pts[pts.length-1];
+    if (!last || Math.abs(last[0]-p[0]) > 1e-9 || Math.abs(last[1]-p[1]) > 1e-9) pts.push(p);
+  }
   // Rings arrive closed; the duplicate last point is not a vertex.
-  if (pts.length > 1 && pts[0][0] === pts[pts.length-1][0]
-                     && pts[0][1] === pts[pts.length-1][1]) pts.pop();
+  if (pts.length > 1 && Math.abs(pts[0][0]-pts[pts.length-1][0]) < 1e-9
+                     && Math.abs(pts[0][1]-pts[pts.length-1][1]) < 1e-9) pts.pop();
   const n = pts.length;
   if (n < 3) return [];
+
+  // The area the answer has to account for. A ring that crosses itself has no
+  // meaningful interior, and an ear clipper asked to fill one produces
+  // triangles outside the footprint entirely: a slab lying across the street
+  // next to the building. Comparing areas at the end catches that, and any
+  // other case where the clipper gave up partway.
+  let ringArea = 0;
+  for (let i = 0; i < n; i++) {
+    const a = pts[i], b = pts[(i+1)%n];
+    ringArea += a[0]*b[1] - b[0]*a[1];
+  }
+  ringArea = Math.abs(ringArea) / 2;
+  if (!(ringArea > 1e-6)) return [];
 
   const area2 = (a,b,c) => (b[0]-a[0])*(c[1]-a[1]) - (b[1]-a[1])*(c[0]-a[0]);
   let sum = 0;
@@ -396,6 +422,15 @@ export function triangulate(ring) {
     if (!clipped) return out.length ? out : [];   // self-intersecting ring
   }
   if (idx.length === 3) out.push([pts[idx[0]],pts[idx[1]],pts[idx[2]]]);
+
+  // Only hand back a roof that actually covers its own footprint. Anything else
+  // is a guess about a ring the data got wrong, and a missing roof is a far
+  // smaller fault than a slab of building lying across a road.
+  let made = 0;
+  for (const [a,b,c] of out) {
+    made += Math.abs((b[0]-a[0])*(c[1]-a[1]) - (b[1]-a[1])*(c[0]-a[0])) / 2;
+  }
+  if (Math.abs(made - ringArea) > ringArea * 0.02 + 1e-6) return [];
   return out;
 }
 
