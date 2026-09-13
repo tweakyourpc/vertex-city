@@ -43,6 +43,30 @@ export function workerOverride(location = '', storage = null) {
   try { return serviceBase(storage?.getItem(OVERRIDE_KEY)); } catch { return ''; }
 }
 
+/**
+ * Choose a Worker at runtime, from the application itself.
+ *
+ * The only ways to set this were editing a source file or hand-writing a query
+ * parameter, neither of which is configuration a person can be expected to
+ * find. The storage key and validation are the same ones `?worker=` uses, so a
+ * URL set here and one set in the address bar are the same setting.
+ *
+ * @returns {string} the accepted base, or '' if it was cleared or rejected
+ */
+export function setWorkerOverride(value, storage = globalThis.localStorage) {
+  const chosen = serviceBase(value);
+  try {
+    if (chosen) storage?.setItem(OVERRIDE_KEY, chosen);
+    else storage?.removeItem(OVERRIDE_KEY);
+  } catch { /* a browser that refuses storage still gets this session */ }
+  return chosen;
+}
+
+/** What is configured right now, for showing in the interface. */
+export function currentWorkerOverride(storage = globalThis.localStorage) {
+  try { return serviceBase(storage?.getItem(OVERRIDE_KEY)); } catch { return ''; }
+}
+
 /** Optional Worker owned by the person deploying this fork. */
 export const WORKER_URL = workerOverride(
   [globalThis.location?.search, globalThis.location?.hash], globalThis.localStorage,

@@ -143,7 +143,11 @@ test('FlockLayer is inactive without a configured Worker', () => {
   const layer = new FlockLayer({ workerUrl: '' });
   layer.setWorld(geoWorld());
   assert.equal(layer.active, false);
-  assert.match(layer.statusOf(null, false, true), /SETUP REQUIRED/);
+  // The wording matters here: the status has to name what is missing and how
+  // to supply it, not merely report that something is wrong.
+  const status = layer.statusOf(null, false, true);
+  assert.match(status, /WORKER/i, `status should name the missing piece: ${status}`);
+  assert.match(status, /\?worker=|README/i, `status should say where to go: ${status}`);
 });
 
 test('FlockLayer polls and stores cameras when live', async () => {

@@ -304,7 +304,9 @@ export class FlockLayer {
   statusOf(cam = null, imperial = false, live = true) {
     if (!this.enabled) return 'OFF';
     if (!this.proj) return 'N/A';
-    if (!this.workerUrl) return 'SETUP REQUIRED';
+    // Name the thing that is missing and how to supply it. "SETUP REQUIRED"
+    // on its own reports a problem and withholds the fix.
+    if (!this.workerUrl) return 'NEEDS A WORKER — add ?worker=<url>, see README';
     if (!live) return 'SIM · press 0 for live';
     if (this.loading && !this.hasPolled) return 'SEARCHING';
     if (this.lastError > this.lastSuccess && this.records.size === 0) return 'UNAVAILABLE';

@@ -1,4 +1,5 @@
 import { WIRE_PALETTES, DEFAULT_WIRE_PALETTE } from './render/palettes.js';
+import { setWorkerOverride, currentWorkerOverride } from './runtime-config.js';
 
 /** The v3 controls: geography, visual style, and data layers stay independent. */
 export const presentation = {
@@ -63,6 +64,36 @@ export function bindExperience({ input, cam, state, screen, layers, signs, label
   $('show-labels').onchange = () => { labels.mode = $('show-labels').checked?2:0; };
   $('traffic-mode').value=String(traffic.mode);
   $('traffic-mode').onchange = () => { while(traffic.mode!==Number($('traffic-mode').value))traffic.cycle(); };
+  // The Worker for live aircraft and cameras, set from inside the application.
+  // It used to require editing a source file or hand-writing a query parameter,
+  // which is not configuration anyone should be expected to discover.
+  const workerState=(msg,cls)=>{ const el=$('worker-state');
+    if(!el) return; el.textContent=msg; el.className='provider-status'+(cls?' '+cls:''); };
+  const applyWorker=(value)=>{
+    const chosen=setWorkerOverride(value);
+    // Live, not on next reload: both layers read this on every poll.
+    layers.aircraft.workerUrl=chosen;
+    layers.flock.workerUrl=chosen;
+    if(chosen){
+      workerState('Using '+chosen,'ok');
+      // A layer already switched on should start working immediately.
+      layers.aircraft.refreshNow?.();
+    } else if(String(value||'').trim()){
+      workerState('That is not a usable http(s) URL','bad');
+    } else {
+      workerState('Cleared. Aircraft and cameras are off until one is set.');
+    }
+  };
+  if($('worker-url')){
+    $('worker-url').value=currentWorkerOverride();
+    if(currentWorkerOverride()) workerState('Using '+currentWorkerOverride(),'ok');
+    $('worker-save').onclick=()=>applyWorker($('worker-url').value);
+    $('worker-url').addEventListener('keydown',(e)=>{
+      if(e.key==='Enter'){ applyWorker($('worker-url').value); }
+      e.stopPropagation();
+    });
+  }
+
   $('flight-toggle').onclick = () => { input.taps.v=(input.taps.v||0)+1; };
   for(const button of document.querySelectorAll('[data-move]')) {
     button.onpointerdown = event => { event.preventDefault();button.setPointerCapture(event.pointerId);input.keys[button.dataset.move]=true; };

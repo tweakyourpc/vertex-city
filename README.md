@@ -75,27 +75,62 @@ npm start
 
 `GET /whoami` reports the running service identity and selected port.
 
-### Deployment Worker
+### Live aircraft and camera layers: what setup they need
 
-The official GitHub Pages hostname uses its deployment-owned Worker. Clean
-clones and alternate hostnames do not inherit that service and send no traffic
-through the original author's account. Weather, OSM, geocoding, explicitly
-tagged Wikipedia links, astronomy, local radio, and the procedural city all
-work without a Worker. Live aircraft and live ALPR cameras need one, because
-neither upstream sends CORS headers a browser will accept.
+Everything else works with no setup at all. The procedural city, real
+OpenStreetMap streets, weather, astronomy, geocoding, Wikipedia links and local
+radio all run straight from a clone.
 
-To enable those features, deploy the included Worker from your own Cloudflare
-account and put its URL in `vertex-city.config.js`:
+**Two layers need a Worker: live aircraft (ADS-B) and camera locations
+(DeFlock).** Not because they are paid or private, but because neither upstream
+sends CORS headers a browser will accept, so the request has to be made
+somewhere that is not a browser. Both show `SETUP REQUIRED` in the HUD until
+one is configured.
+
+**No API keys are involved.** The upstreams are public: `adsb.lol`,
+`opendata.adsb.fi`, OpenSky and the DeFlock CDN. You are standing up a proxy,
+not buying access.
+
+There are three ways to point at one, easiest first.
+
+**1. A Worker you already have, no code change.** Add `?worker=` to the URL.
+It is remembered in that browser only and never committed:
+
+```text
+http://localhost:PORT/?worker=https://your-worker.workers.dev#city=procedural
+```
+
+**2. Locally, for development.** Run the included Worker on your own machine
+and point at it. Nothing is deployed:
+
+```bash
+npx wrangler dev          # serves the Worker on http://localhost:8787
+```
+```text
+http://localhost:PORT/?worker=http://localhost:8787#city=procedural
+```
+
+**3. Deployed, for a fork you are publishing.** Deploy the Worker to your own
+Cloudflare account, then edit `vertex-city.config.js` so your hostname opts in:
 
 ```bash
 npm run worker:deploy
 ```
 
 ```js
+// vertex-city.config.js — keep the named export, the tests import it
+export const workerUrlForHost = (hostname) => hostname === 'your-site.example'
+  ? 'https://your-worker.workers.dev'
+  : '';
+
 export default Object.freeze({
-  workerUrl: 'https://your-worker.example',
+  workerUrl: workerUrlForHost(globalThis.location?.hostname),
 });
 ```
+
+The hostname gate is deliberate: a clone or fork inherits no service and sends
+no traffic through anyone else's account. Replace the hostname with your own
+and nothing else changes.
 
 #### Choosing a Worker at runtime
 
