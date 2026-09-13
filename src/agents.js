@@ -62,6 +62,30 @@ export function walkOffsetForEdge(edge) {
   return width * 0.5 + 0.85;
 }
 
+/**
+ * Do two agents' footprints overlap?
+ *
+ * Tested in `a`'s frame: along its heading against the two half-lengths, across
+ * it against the two half-widths. An approximation of two oriented boxes, and
+ * close enough at this scale to keep solid things out of each other.
+ *
+ * Braking alone could never guarantee this. Slowing down is advice, and advice
+ * loses whenever the deceleration cannot cover the closing speed; the only way
+ * nothing ends up inside anything else is to refuse the move that would do it.
+ */
+export function footprintsOverlap(a, b) {
+  const dx = b.x - a.x, dy = b.y - a.y;
+  if (!(Math.abs(dx) < 6) || !(Math.abs(dy) < 6)) return false;
+  const hx = a.hx || 1, hy = a.hy || 0;
+  const along = Math.abs(dx * hx + dy * hy);
+  const across = Math.abs(dx * hy - dy * hx);
+  const aL = a.vehicle ? a.vehicle.length / 2 : PED_WIDTH / 2;
+  const aW = a.vehicle ? a.vehicle.width / 2 : PED_WIDTH / 2;
+  const bL = b.vehicle ? b.vehicle.length / 2 : PED_WIDTH / 2;
+  const bW = b.vehicle ? b.vehicle.width / 2 : PED_WIDTH / 2;
+  return along < aL + bL && across < aW + bW;
+}
+
 /** Centre one lane in each directed half of the mapped carriageway. */
 export function laneOffsetForEdge(edge) {
   const width = Number.isFinite(edge?.width)
@@ -513,12 +537,22 @@ export class Traffic {
     const dx = p.x - a.x, dy = p.y - a.y;
     const want = Math.hypot(dx, dy);
     const stride = a.spd * dt * 1.8;
+    const fromX = a.x, fromY = a.y;
     if (want > stride && want > 1e-6) {
       a.x += (dx / want) * stride;
       a.y += (dy / want) * stride;
     } else {
       a.x = p.x;
       a.y = p.y;
+    }
+    // A person does not walk through a car either. Refuse the step and wait;
+    // the car will clear, and a pedestrian standing still at a kerb is a great
+    // deal more believable than one passing through a bus.
+    for (const other of this.agents) {
+      if (other === a) continue;
+      if (!footprintsOverlap(a, other)) continue;
+      const was = { x: fromX, y: fromY, hx: a.hx, hy: a.hy };
+      if (!footprintsOverlap(was, other)) { a.x = fromX; a.y = fromY; break; }
     }
     // Face the direction actually walked, so someone rounding a corner turns
     // through it rather than snapping to the new street's bearing.
@@ -666,6 +700,7 @@ export class Traffic {
 
     const rate = desired < a.spd ? 7 : 2.2;
     a.spd += Math.max(-rate * dt, Math.min(rate * dt, desired - a.spd));
+    const beforeAdvance = a.distance;
     a.distance += a.spd * dt;
 
     while (a.distance >= edge.length && edge.length > 0) {
@@ -699,8 +734,6 @@ export class Traffic {
       a.distance / 3.2, (edge.length - a.distance) / 3.2));
     const p = positionOnEdge(graph, edge, a.distance, laneOffsetForEdge(edge) * ease);
     const movedX = p.x - a.x, movedY = p.y - a.y;
-    a.x = p.x;
-    a.y = p.y;
     if (!Number.isFinite(a.renderX) || !Number.isFinite(a.renderY)) {
       a.renderX = p.x;
       a.renderY = p.y;
@@ -709,6 +742,31 @@ export class Traffic {
       a.renderX += (p.x - a.renderX) * blend;
       a.renderY += (p.y - a.renderY) * blend;
     }
+    // Hard constraint. Everything above is advice: a desired speed, a gap, a
+    // right of way. None of it guarantees anything, and whenever the closing
+    // speed beat the braking the cars simply drove through each other. A move
+    // that would put this car inside another car or a pedestrian is refused
+    // outright, and the car stops where it is rather than passing through.
+    const wasX = a.x, wasY = a.y;
+    a.x = p.x; a.y = p.y;
+    // Refuse only moves that create a NEW overlap. Blocking any move while
+    // overlapping at all is a trap: two agents that start inside one another,
+    // from a spawn or a world rebind, can then never separate, and the whole
+    // grid seizes. Something already overlapping is allowed to move apart.
+    let blocked = false;
+    for (const other of agents) {
+      if (other === a) continue;
+      if (!footprintsOverlap(a, other)) continue;
+      const was = { x: wasX, y: wasY, hx: a.hx, hy: a.hy, vehicle: a.vehicle };
+      if (!footprintsOverlap(was, other)) { blocked = true; break; }
+    }
+    if (blocked) {
+      a.x = wasX; a.y = wasY;
+      a.distance = beforeAdvance;
+      a.spd = 0;
+      return;
+    }
+
     // Point along the path actually travelled, not along the edge. On the arc
     // through a corner those differ, and steering to the edge direction is
     // what made the turn read as an instant right angle.

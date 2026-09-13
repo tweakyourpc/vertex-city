@@ -291,6 +291,18 @@ function signalMast(mesh,lamps,px,py,ux,uy,width,group,offset,crossName) {
   }
 }
 
+/** A streetlight: dark pole, opaque housing, light on the underside only. */
+function lamppost(mesh,lights,x,y) {
+  mesh.box(x,y,.06,.055,.055,2.3,0,[.22,.29,.29]);
+  // An opaque housing with the light on its underside, so nothing glows at
+  // anyone looking down on it.
+  mesh.box(x,y,2.30,.38,.38,.07,0,[.20,.23,.24]);
+  const g=.155;
+  mesh.quad([[x-g,y-g,2.295],[x+g,y-g,2.295],[x+g,y+g,2.295],[x-g,y+g,2.295]],
+    [0,0,-1],[1,.87,.55],3);
+  lights.disc(x,y,.03,3.2,[1,.82,.48],5);
+}
+
 function frontage(mesh,a,b,height,seed,colour) {
   const dx=b[0]-a[0],dy=b[1]-a[1],len=Math.hypot(dx,dy);
   if(len < 1) return;
@@ -434,6 +446,16 @@ export function buildDistrict(world, cam, radius = 145) {
          && hash(x,y,27)>.85 && clearOfRoad(x,y,2.3)) {
         tree(mesh,x,y,Math.round(x*19+y*7));
       }
+      // Streetlights are placed from the raster too, on cells the world itself
+      // calls pavement. Positioning them by an offset from a road polyline
+      // could not work: the polylines and the rasterised streets are separate
+      // descriptions of this city and they do not coincide, so the offset was
+      // landing in the carriageway. A cell that says SIDEWALK is the one thing
+      // that cannot be wrong about where the pavement is.
+      if(type===T.SIDEWALK && Math.hypot(x-cx,y-cy)<62
+         && hash(x,y,91)>.90 && clearOfRoad(x,y,0.35)) {
+        lamppost(mesh,lights,x+.5,y+.5);
+      }
     }
   }
   // Mapped footprints, drawn from their exact rings.
@@ -552,32 +574,51 @@ export function buildDistrict(world, cam, radius = 145) {
       for(let g=first;g<base+hi;g+=STEP) {
         const d=g-base;
         const side=(Math.round(g/STEP)&1)?1:-1;
-        // Far enough out that a 0.95-radius canopy clears the carriageway
-        // rather than hanging over the near lane.
-        const offset=width/2+1.2,x=a[0]+ux*d-uy*offset*side,y=a[1]+uy*d+ux*offset*side;
-        const slot=world.sample(x,y);
-        if(world.h[slot]>.1 || ![T.SIDEWALK,T.PATH,T.YARD].includes(world.type[slot]) || Math.hypot(x-cx,y-cy)>65) continue;
+        // Step out from the kerb until the ground is genuinely pavement AND
+        // clear of every nearby carriageway. A fixed offset assumed the road
+        // was exactly as wide as the lane table says and that the centreline
+        // sat in the middle of it; neither holds, which is how street furniture
+        // ended up standing in traffic. Asking the world is the only thing that
+        // knows where the kerb is.
+        // Search the raster for real pavement near this point instead of
+        // trusting an offset from the centreline. The polyline and the
+        // rasterised streets are two independent descriptions of the same city
+        // and they do not line up, so any fixed offset from one lands somewhere
+        // arbitrary in the other. The world's own cells are the authority on
+        // where a kerb is; the offset was only ever a guess at it.
+        let x=null,y=null,bestD=Infinity;
+        const ax=a[0]+ux*d, ay=a[1]+uy*d;
+        for(let oy=-4;oy<=4;oy++) for(let ox=-4;ox<=4;ox++) {
+          const px=Math.floor(ax)+ox+0.5, py=Math.floor(ay)+oy+0.5;
+          const sl=world.sample(px,py);
+          if(world.h[sl]>.1) continue;
+          if(![T.SIDEWALK,T.PATH,T.YARD].includes(world.type[sl])) continue;
+          if(!clearOfRoad(px,py,0.45)) continue;
+          const dd=Math.hypot(px-ax,py-ay);
+          if(dd<bestD){bestD=dd;x=px;y=py;}
+        }
+        if(x===null || Math.hypot(x-cx,y-cy)>65) continue;
         if(nearbyJunctions.some(j=>Math.hypot(j.x-x,j.y-y)<width+2)) continue;
         const seed=Math.round(hash(Math.round(x*8),Math.round(y*8),42)*10000);
         // A street tree only goes in if its canopy is provably clear of the
         // carriageway. If it is not, put the lamp there instead: a missing tree
         // costs nothing, a tree standing in the road is never acceptable.
-        if(seed%3 && clearOfRoad(x,y,1.35)) tree(mesh,x,y,seed);
+        // Nothing is planted here unless the spot is clear of the carriageway.
+        // Routing failed tree placements to a lamp instead was worse than the
+        // problem it fixed: every spot too close to the road, which is exactly
+        // the set a tree had just been refused, got a streetlight standing in
+        // the traffic. If the ground will not take a tree it will not take a
+        // pole either, and the right answer is to leave it empty.
+        // Each object clears the road by what it actually occupies: a pole is
+        // thin, a canopy is two metres across. Anything that cannot make its
+        // own clearance is simply not placed. Sending a refused tree to a lamp
+        // instead put a streetlight in the carriageway at every spot a tree had
+        // just been rejected from, which was worse than what it replaced.
+        // A canopy is two metres across, so a tree needs more room than a pole.
+        // Whatever cannot make its own clearance is not placed at all.
+        if(seed%3) { if(clearOfRoad(x,y,1.35)) tree(mesh,x,y,seed); }
         else {
-          mesh.box(x,y,.06,.055,.055,2.3,0,[.22,.29,.29]);
-          // An opaque housing with the light on its underside. The head used to
-          // be one emissive box, and nothing culls backfaces here, so its top
-          // face glowed at anyone looking down on it: a lit tile on a pole
-          // rather than a lamp. The housing now occludes the source from above,
-          // and the source only faces the ground it is lighting.
-          mesh.box(x,y,2.30,.38,.38,.07,angle,[.20,.23,.24]);
-          const g=.155;
-          mesh.quad([[x-g,y-g,2.295],[x+g,y-g,2.295],[x+g,y+g,2.295],[x-g,y+g,2.295]],
-            [0,0,-1],[1,.87,.55],3);
-          // Radial falloff rides in the disc's uv.x, which runs 0 at the
-          // centre to 1 at the rim, so the pool fades out instead of ending
-          // at a hard circle.
-          lights.disc(x,y,.03,3.2,[1,.82,.48],5);
+          lamppost(mesh,lights,x,y);
         }
         if(seed%4===0) {
           // The bench sits 1.8 cells further along the road than the point that
