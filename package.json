@@ -15,7 +15,8 @@
     "check": "npm run lint && npm test",
     "browser:check": "node tools/browser-v3.mjs",
     "shader:check": "node tools/shader-check.mjs",
-    "media": "node tools/capture-media.mjs"
+    "media": "node tools/capture-media.mjs",
+    "hero": "node tools/compose-hero.mjs"
   },
   "keywords": [
     "openstreetmap",

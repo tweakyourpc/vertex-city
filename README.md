@@ -18,6 +18,8 @@ Four ways to see the same city:
 | **ASCII** | the character study this began as |
 | **Pixel** | a half-block cinematic compositor |
 
+![Cityscape: real streets and a real sky, in daylight](docs/hero-cityscape.png)
+
 Where the survey runs out, a generated substrate carries the city to the
 horizon, scaled to the skyline of the place it surrounds, and every invented
 cell is marked as such. In the wireframe view the frontier has its own colour:
