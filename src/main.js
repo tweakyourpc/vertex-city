@@ -333,7 +333,10 @@ function update(dt, live) {
   flock.update(dt, cam, live, null);
   // Light ground traffic routes the street grid; it is independent of the live
   // clock, so it runs whenever the world has streets.
-  traffic.update(dt, cam);
+  // The city clock, which is also what draw() hands the surface renderer as
+  // `time`. Signals are read from it on both sides, so the lamp a driver obeys
+  // is the lamp you can see.
+  traffic.update(dt, cam, cityClock.instantMs / 1000);
 }
 
 /* --------------------------------- draw --------------------------------- */

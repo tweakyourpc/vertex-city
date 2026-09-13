@@ -128,6 +128,101 @@ function crossing(mesh,px,py,ux,uy,width) {
 }
 
 /**
+ * A 3x5 block font, one 15-bit mask per glyph, rows top to bottom and the high
+ * bit of each row on the left.
+ *
+ * Street names on the mast arm have to be readable as geometry, not as an
+ * overlay: the blade hangs in the world and has to carry its own lettering or
+ * it is a blank board. Three by five is the smallest grid that stays legible,
+ * and at one quad per lit pixel a name costs only a few hundred triangles.
+ */
+const GLYPH = {
+  A:0b010101111101101, B:0b110101110101110, C:0b011100100100011,
+  D:0b110101101101110, E:0b111100110100111, F:0b111100110100100,
+  G:0b011100101101011, H:0b101101111101101, I:0b111010010010111,
+  J:0b001001001101010, K:0b101101110101101, L:0b100100100100111,
+  M:0b101111111101101, N:0b101111111111101, O:0b010101101101010,
+  P:0b110101110100100, Q:0b010101101111011, R:0b110101110101101,
+  S:0b011100010001110, T:0b111010010010010, U:0b101101101101011,
+  V:0b101101101101010, W:0b101101111111101, X:0b101101010101101,
+  Y:0b101101010010010, Z:0b111001010100111,
+  0:0b111101101101111, 1:0b010110010010111, 2:0b110001010100111,
+  3:0b110001010001110, 4:0b101101111001001, 5:0b111100110001110,
+  6:0b011100110101010, 7:0b111001010010010, 8:0b010101010101010,
+  9:0b010101011001110, ' ':0, '-':0b000000111000000, '.':0b000000000000010,
+};
+
+/**
+ * A name blade hanging under a mast arm, lettered and facing oncoming traffic.
+ *
+ * `ux,uy` points the way the traffic this faces is travelling, so the board is
+ * turned back toward it. Stopped at the line you are looking at the name of the
+ * street you are about to cross, which is the one thing a driver at a red light
+ * actually wants to know.
+ */
+function nameBlade(mesh,cx,cy,z,ux,uy,text) {
+  const label=String(text||'').toUpperCase().slice(0,18);
+  if(!label) return;
+  const nx=-uy, ny=ux;
+  const PX=0.055;                          // one font pixel, in cells
+  const cw=4*PX;                           // 3 wide plus a space
+  const wide=label.length*cw;
+  const board=wide/2+3*PX;
+
+  // The board itself, just behind the lettering.
+  const face=(a,b,zz,hh,col,kind=0)=>{
+    mesh.quad([
+      [cx+nx*a, cy+ny*a, zz],
+      [cx+nx*b, cy+ny*b, zz],
+      [cx+nx*b, cy+ny*b, zz+hh],
+      [cx+nx*a, cy+ny*a, zz+hh],
+    ],[-ux,-uy,0],col,kind);
+  };
+  face(-board,board,z-4.5*PX,9*PX,[.06,.30,.13]);
+
+  const out=PX*0.35;                       // lettering stands proud of the board
+  const lx=cx-ux*out, ly=cy-uy*out;
+  for(let i=0;i<label.length;i++) {
+    const mask=GLYPH[label[i]];
+    if(!mask) continue;
+    const x0=-wide/2+i*cw;
+    for(let r=0;r<5;r++) for(let c=0;c<3;c++) {
+      if(!(mask>>(14-(r*3+c))&1)) continue;
+      const a=x0+c*PX, b=a+PX, zz=z+2*PX-r*PX;
+      mesh.quad([
+        [lx+nx*a, ly+ny*a, zz],
+        [lx+nx*b, ly+ny*b, zz],
+        [lx+nx*b, ly+ny*b, zz+PX],
+        [lx+nx*a, ly+ny*a, zz+PX],
+      ],[-ux,-uy,0],[.93,.95,.92],3);
+    }
+  }
+}
+
+/**
+ * The name of the street crossing this junction, as seen from one approach.
+ *
+ * The blade on a mast arm names the road you are about to cross, not the one
+ * you are already on, so the search is for a nearby segment running across the
+ * approach rather than along it.
+ */
+function crossStreetName(world,nearRoads,j,ux,uy) {
+  const names=world.streetNames||[];
+  let best=null,bestD=Infinity;
+  for(const r of nearRoads) {
+    if(r.nameId===undefined||r.nameId<0) continue;
+    const dx=r.b[0]-r.a[0],dy=r.b[1]-r.a[1],L=Math.hypot(dx,dy)||1;
+    // Across, not along: a small dot product with the approach direction.
+    if(Math.abs((dx/L)*ux+(dy/L)*uy)>0.5) continue;
+    const mx=(r.a[0]+r.b[0])/2,my=(r.a[1]+r.b[1])/2;
+    const d=Math.hypot(mx-j.x,my-j.y);
+    if(d<bestD){bestD=d;best=r;}
+  }
+  if(!best||bestD>26) return '';
+  return names[best.nameId]||'';
+}
+
+/**
  * A signal head on a mast arm over the carriageway.
  *
  * Signals existed only as glyph columns at the four corners of a junction, so
@@ -141,21 +236,27 @@ function crossing(mesh,px,py,ux,uy,width) {
  * cycle `traffic-signals.js` runs. Both have to agree, or the cars will stop
  * for a light that looks green.
  */
-function signalMast(mesh,lamps,px,py,ux,uy,width,group,offset) {
+function signalMast(mesh,lamps,px,py,ux,uy,width,group,offset,crossName) {
   const nx=-uy, ny=ux;
-  const POLE_H=2.78, ARM_Z=2.52;           // about 6.6 m and 6.0 m
+  const POLE_H=3.15, ARM_Z=2.88;           // about 7.5 m and 6.8 m
   const reach=width/2+0.9;
-  const bx=px+nx*(width/2+0.75), by=py+ny*(width/2+0.75);
+  // Right-hand kerb, on the FAR side of the junction. A head mounted on the
+  // near kerb sits above and behind a driver at the line, where it cannot be
+  // read without leaning forward; the one you actually watch is across the
+  // intersection, facing back at you.
+  const bx=px-nx*(width/2+0.75), by=py-ny*(width/2+0.75);
   const angle=Math.atan2(uy,ux);
 
   mesh.box(bx,by,0,.17,.17,POLE_H,0,[.21,.25,.26]);
-  // Arm from the kerb out over the middle of the road.
-  const ax=bx-nx*reach/2, ay=by-ny*reach/2;
+  // Arm from that kerb back out over the carriageway.
+  const ax=bx+nx*reach/2, ay=by+ny*reach/2;
   mesh.box(ax,ay,ARM_Z,reach,.12,.12,angle+Math.PI/2,[.21,.25,.26]);
 
   // Head at the far end, facing back down the approach.
-  const hx=bx-nx*reach, hy=by-ny*reach;
+  const hx=bx+nx*reach, hy=by+ny*reach;
   mesh.box(hx,hy,ARM_Z-1.02,.30,.30,1.00,angle,[.13,.16,.17]);
+  // The cross street's name, hung horizontally under the arm beside the head.
+  if(crossName) nameBlade(mesh,ax,ay,ARM_Z-0.30,ux,uy,crossName);
   const COL=[[1,.13,.10],[1,.70,.12],[.20,1,.32]];
   for(let i=0;i<3;i++) {
     const z=ARM_Z-0.28-i*0.30, r=0.10;
@@ -269,6 +370,31 @@ export function buildDistrict(world, cam, radius = 145) {
   const mesh=new Mesh(), lights=new Mesh(), beacons=new Mesh(), walkers=[];
   const cx=Math.floor(cam.x/32)*32+16,cy=Math.floor(cam.y/32)*32+16;
   const nearbyJunctions=(world.junctions||[]).filter(j=>Math.hypot(j.x-cx,j.y-cy)<radius+15);
+
+  // Road segments in range, gathered once. Trees are placed from the raster,
+  // but a road is DRAWN wider than it is rasterised, so a cell the world calls
+  // TREE can sit under the carriageway that gets painted over it. Two of every
+  // five trees near a street landed in the road that way. Nothing goes on the
+  // ground without checking it against the geometry actually drawn there.
+  const nearRoads=[];
+  for(const road of world.roads||[]) {
+    const width=road.width||3.8;
+    for(let i=1;i<road.pts.length;i++) {
+      const a=road.pts[i-1],b=road.pts[i];
+      if(Math.hypot((a[0]+b[0])/2-cx,(a[1]+b[1])/2-cy)>radius+40) continue;
+      nearRoads.push({a,b,width,nameId:road.nameId});
+    }
+  }
+  const clearOfRoad=(px,py,margin)=>{
+    for(const r of nearRoads) {
+      const dx=r.b[0]-r.a[0],dy=r.b[1]-r.a[1],L=dx*dx+dy*dy;
+      let t=L?((px-r.a[0])*dx+(py-r.a[1])*dy)/L:0;
+      t=t<0?0:t>1?1:t;
+      const d=Math.hypot(px-(r.a[0]+dx*t),py-(r.a[1]+dy*t));
+      if(d<r.width/2+margin) return false;
+    }
+    return true;
+  };
   mesh.box(cx,cy,-.10,radius*2.8,radius*2.8,.1,0,[.70,.71,.65]);
   // Read existing terrain into coarse, contiguous runs. Buildings themselves
   // are emitted from exact rings, not from these terrain samples.
@@ -282,7 +408,11 @@ export function buildDistrict(world, cam, radius = 145) {
     for(let x=cx-radius;x<=cx+radius;x+=2) {
       const slot=world.sample(x,y),type=world.type[slot];
       if(type!==previous || x===cx+radius) { if(previous>=0) paint(x,previous); start=x; previous=type; runSim=simOf(world,slot); }
-      if((type===T.TREE||type===T.FOREST) && Math.hypot(x-cx,y-cy)<70 && hash(x,y,27)>.85) tree(mesh,x,y,Math.round(x*19+y*7));
+      // 1.25 clears the drawn sidewalk slab, and the canopy on top of it.
+      if((type===T.TREE||type===T.FOREST) && Math.hypot(x-cx,y-cy)<70
+         && hash(x,y,27)>.85 && clearOfRoad(x,y,2.3)) {
+        tree(mesh,x,y,Math.round(x*19+y*7));
+      }
     }
   }
   // Mapped footprints, drawn from their exact rings.
@@ -364,7 +494,12 @@ export function buildDistrict(world, cam, radius = 145) {
         // in unison. Both are deterministic, which keeps the mesh stable.
         const group=Math.abs(dirx)>Math.abs(diry)?0:1;
         const offset=Math.abs(Math.round(j.x*7+j.y*13))%32;
-        signalMast(mesh,beacons,a[0]+ux*d,a[1]+uy*d,dirx,diry,width,group,offset);
+        // The head goes on the far kerb, past the junction, so a driver at the
+        // line looks across the intersection at it rather than up at a pole
+        // beside them. The blade names the street being crossed.
+        const fx=j.x+dirx*(width/2+2.2), fy=j.y+diry*(width/2+2.2);
+        signalMast(mesh,beacons,fx,fy,dirx,diry,width,group,offset,
+          crossStreetName(world,nearRoads,j,dirx,diry));
       }
       if(!foot) for(let d=Math.ceil(lo/4)*4;d<hi;d+=4) {
         if(nearbyJunctions.some(j=>Math.hypot(j.x-(a[0]+ux*d),j.y-(a[1]+uy*d))<width+1)) continue;
@@ -378,12 +513,17 @@ export function buildDistrict(world, cam, radius = 145) {
       for(let g=first;g<base+hi;g+=STEP) {
         const d=g-base;
         const side=(Math.round(g/STEP)&1)?1:-1;
-        const offset=width/2+.8,x=a[0]+ux*d-uy*offset*side,y=a[1]+uy*d+ux*offset*side;
+        // Far enough out that a 0.95-radius canopy clears the carriageway
+        // rather than hanging over the near lane.
+        const offset=width/2+1.2,x=a[0]+ux*d-uy*offset*side,y=a[1]+uy*d+ux*offset*side;
         const slot=world.sample(x,y);
         if(world.h[slot]>.1 || ![T.SIDEWALK,T.PATH,T.YARD].includes(world.type[slot]) || Math.hypot(x-cx,y-cy)>65) continue;
         if(nearbyJunctions.some(j=>Math.hypot(j.x-x,j.y-y)<width+2)) continue;
         const seed=Math.round(hash(Math.round(x*8),Math.round(y*8),42)*10000);
-        if(seed%3) tree(mesh,x,y,seed);
+        // A street tree only goes in if its canopy is provably clear of the
+        // carriageway. If it is not, put the lamp there instead: a missing tree
+        // costs nothing, a tree standing in the road is never acceptable.
+        if(seed%3 && clearOfRoad(x,y,1.35)) tree(mesh,x,y,seed);
         else {
           mesh.box(x,y,.06,.055,.055,2.3,0,[.22,.29,.29]);
           // An opaque housing with the light on its underside. The head used to
@@ -429,10 +569,16 @@ export function buildMovers(traffic, district, time) {
     const p=car.vehicle, x=car.renderX??car.x,y=car.renderY??car.y;
     const angle=Math.atan2(car.hy||0,car.hx||1),col=p?.paint.map(c=>c/255)||[.73,.24,.18];
     const len=p?.length||1.85,w=p?.width||.78;
-    mesh.box(x,y,.16,len,w,.28,angle,col);
-    mesh.box(x,y,.44,len*.55,w*.83,.28,angle,[.23,.38,.44]);
-    mesh.box(x,y,.70,len*.42,w*.78,.06,angle,col);
     const ux=Math.cos(angle),uy=Math.sin(angle);
+    mesh.box(x,y,.16,len,w,.28,angle,col);
+    // Glazing, not a black box. The cabin was .23,.38,.44 in every light, which
+    // at night is near enough to the body to read as a solid block and by day
+    // hides that anyone is in there. Lighter glass, and a head behind it.
+    mesh.box(x,y,.44,len*.55,w*.83,.28,angle,[.50,.63,.69]);
+    const tint=(car.vehicleSeed>>>0);
+    const SKIN=[[.94,.78,.65],[.86,.67,.50],[.72,.52,.37],[.55,.38,.26],[.38,.26,.19],[.29,.19,.14]];
+    mesh.box(x-ux*len*.04,y-uy*len*.04,.50,.16,.16,.16,angle,SKIN[tint%SKIN.length]);
+    mesh.box(x,y,.70,len*.42,w*.78,.06,angle,col);
     for(const side of [-1,1]) for(const end of [-1,1]) {
       mesh.box(x+ux*len*.32*end-uy*w*.46*side,y+uy*len*.32*end+ux*w*.46*side,.075,.29,.12,.27,angle,[.12,.15,.16]);
     }

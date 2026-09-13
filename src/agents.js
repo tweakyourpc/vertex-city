@@ -77,6 +77,7 @@ export class Traffic {
     this.seed = seed >>> 0;
     this._seedState = this.seed;
     this._routeState = this.seed ^ 0x9e3779b9;
+    this._nextId = 1;
     this.maxCars = MAX_CARS;
     this.detailMode = 'auto';
     this.renderStats = { simulated: 0, visible: 0, cells: 0, near: 0, mid: 0, far: 0 };
@@ -259,7 +260,7 @@ export class Traffic {
           return true;
         }
         const car = this._prepareCar({
-          kind, edgeId: edge.id, distance, x: p.x, y: p.y,
+          kind, id: this._nextId++, edgeId: edge.id, distance, x: p.x, y: p.y,
           renderX: p.x, renderY: p.y,
           hx: edge.dx, hy: edge.dy, spd: 2 + this._random() * 2,
           targetSpd: 5 + this._random() * 3, pal: (this._random() * 4) | 0,
@@ -333,7 +334,17 @@ export class Traffic {
     return true;
   }
 
-  update(dt, cam) {
+  /**
+   * @param {number} dt seconds
+   * @param {object} cam camera, for spawning and culling
+   * @param {number} [now] the scene's clock in seconds. Signals are read from
+   *   this, and the surface renderer is handed the same value, so the light a
+   *   driver obeys is the light you can see. It used to read Date.now()
+   *   directly while the renderer was given simTime, which are different
+   *   clocks: under time travel they diverge outright, and cars would hold at
+   *   a red that was drawn green.
+   */
+  update(dt, cam, now = Date.now() / 1000) {
     const world = this.world;
     if (this.mode === TRAFFIC.OFF || world.hasStreets === false) {
       this.agents.length = 0;
@@ -354,7 +365,7 @@ export class Traffic {
 
       if (a.kind === 'car' && a.edgeId !== undefined && world.roadGraph) {
         this._prepareCar(a);
-        this._updateGraphCar(a, dt, agents);
+        this._updateGraphCar(a, dt, agents, now);
         continue;
       }
 
@@ -474,7 +485,7 @@ export class Traffic {
     a.hy = edge.dy;
   }
 
-  _updateGraphCar(a, dt, agents) {
+  _updateGraphCar(a, dt, agents, now = Date.now() / 1000) {
     this._prepareCar(a);
     const graph = this.world.roadGraph;
     let edge = graph.edges[a.edgeId];
@@ -493,7 +504,7 @@ export class Traffic {
     const stopBack = lanes / 2 + 3.7;
     if (node.signal && remaining < stopBack + 9) {
       const group = signalGroupForIncoming(graph, node, edge);
-      const state = signalState(Date.now() / 1000, group, node.id * 0.17);
+      const state = signalState(now, group, node.id * 0.17);
       if (state !== 'green') {
         desired = Math.min(desired, Math.max(0, (remaining - stopBack) * 1.4));
       }
@@ -517,15 +528,34 @@ export class Traffic {
     // skipped. A car without a position or heading yet would otherwise pass
     // the guards, since NaN satisfies no inequality, and set the gap to NaN,
     // which silently disables braking for everyone.
+    //
+    // Cross traffic needs a right of way, or two cars meeting at a junction
+    // each brake for the other and neither ever moves again. Without one, cars
+    // spent 87% of their time stopped and some never restarted. Whoever is
+    // closer to the end of their edge is nearer the junction and goes first;
+    // ties break on id so the rule is total and deadlock has nowhere to live.
+    // It is also only consulted at close range: a car eleven cells away on
+    // another street is not a conflict, it is scenery.
+    const CROSS_REACH = 5.0;
+    const myRemaining = edge.length - a.distance;
     const halfWide = a.vehicle.width * 0.5;
     for (const other of agents) {
       if (other === a) continue;
+      const sameLane = other.kind === 'car' && other.edgeId === a.edgeId;
       const ahead = (other.x - a.x) * a.hx + (other.y - a.y) * a.hy;
-      if (!(ahead > 0) || !(ahead < gap)) continue;
+      const reach = sameLane ? gap : Math.min(gap, CROSS_REACH);
+      if (!(ahead > 0) || !(ahead < reach)) continue;
       const lateral = Math.abs((other.x - a.x) * a.hy - (other.y - a.y) * a.hx);
       const theirs = other.kind === 'car'
         ? (this._prepareCar(other).vehicle.width * 0.5) : PED_WIDTH * 0.5;
       if (!(lateral <= halfWide + theirs + 0.12)) continue;
+      if (!sameLane && other.kind === 'car') {
+        const theirEdge = graph.edges[other.edgeId];
+        const theirRemaining = theirEdge ? theirEdge.length - other.distance : Infinity;
+        const yieldToThem = theirRemaining < myRemaining
+          || (theirRemaining === myRemaining && (other.id | 0) < (a.id | 0));
+        if (!yieldToThem) continue;
+      }
       gap = ahead;
     }
     // Braking used to engage at 6 cells. A car at full speed needs about 4.6 to
@@ -543,6 +573,31 @@ export class Traffic {
       }
       const clearance = (a.vehicle.length + leadLength) * 0.5 + 0.55;
       desired = Math.min(desired, Math.max(0, (gap - clearance) * 1.5));
+    }
+
+    // Do not enter a junction you cannot clear. Crossing on green into a queue
+    // that ends inside the box is what leaves a car stranded across the cross
+    // street when the phase changes: it is out of everyone's way only if there
+    // is somewhere for it to be on the far side first.
+    if (node.signal && remaining < stopBack + 1.5) {
+      // Only cars going roughly my way are my queue. Using the general gap
+      // counted the cross traffic stopped at its own red as though it were
+      // blocking my exit, so cars refused to move on green while the junction
+      // in front of them was empty.
+      let queueGap = Infinity;
+      for (const other of agents) {
+        if (other === a || other.kind !== 'car') continue;
+        if (!((other.hx * a.hx + other.hy * a.hy) > 0.6)) continue;
+        const ahead = (other.x - a.x) * a.hx + (other.y - a.y) * a.hy;
+        if (!(ahead > 0) || !(ahead < queueGap)) continue;
+        const lateral = Math.abs((other.x - a.x) * a.hy - (other.y - a.y) * a.hx);
+        if (!(lateral <= a.vehicle.width + 0.3)) continue;
+        queueGap = ahead;
+      }
+      const needed = remaining + a.vehicle.length * 1.1;
+      if (queueGap < needed) {
+        desired = Math.min(desired, Math.max(0, (remaining - stopBack) * 1.4));
+      }
     }
 
     a.braking = desired < a.targetSpd - 0.75 && desired < a.spd + 0.25;
