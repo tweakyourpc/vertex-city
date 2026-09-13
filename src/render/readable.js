@@ -117,8 +117,13 @@ void main() {
     // edge, lighting the whole disc. Measure only axes that have extent.
     vec2 metres = vQuad.xy * vQuad.zw;
     vec2 toEdge = min(metres, vQuad.zw - metres);
-    float border = min(vQuad.z > 0.01 ? toEdge.x : 1e9,
-                       vQuad.w > 0.01 ? toEdge.y : 1e9);
+    // 1e4, not 1e9: mediump float only guarantees a range of
+    // +/-16384, so 1e9 is sixty thousand times over it. Out-of-range literals
+    // are undefined by the spec and some drivers reject them outright, which
+    // takes the whole program down and with it both surface views. Ten
+    // thousand cells is still further than anything here is ever measured.
+    float border = min(vQuad.z > 0.01 ? toEdge.x : 1e4,
+                       vQuad.w > 0.01 ? toEdge.y : 1e4);
 
     // One screen pixel, expressed in world metres at this fragment's range.
     // A width fixed in metres is thick underfoot and gone at distance; scaling
@@ -231,14 +236,21 @@ export class ReadableRenderer {
       const shader = gl.createShader(type);
       gl.shaderSource(shader, source);
       gl.compileShader(shader);
-      if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(shader));
+      if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+        // Name the stage and quote the driver. A bare log gave no clue whether
+        // it was the vertex or the fragment program that would not build.
+        const stage = type === gl.VERTEX_SHADER ? 'vertex' : 'fragment';
+        throw new Error(`${stage} shader: ${gl.getShaderInfoLog(shader)}`);
+      }
       return shader;
     };
     this.program = gl.createProgram();
     gl.attachShader(this.program, compile(gl.VERTEX_SHADER, vertexSource));
     gl.attachShader(this.program, compile(gl.FRAGMENT_SHADER, fragmentSource));
     gl.linkProgram(this.program);
-    if (!gl.getProgramParameter(this.program, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(this.program));
+    if (!gl.getProgramParameter(this.program, gl.LINK_STATUS)) {
+      throw new Error(`link failed: ${gl.getProgramInfoLog(this.program)}`);
+    }
     this.staticBuffer = gl.createBuffer();
     this.movingBuffer = gl.createBuffer();
     this.lightBuffer = gl.createBuffer();
@@ -257,6 +269,14 @@ export class ReadableRenderer {
     const gl = this.gl;
     gl.bindBuffer(gl.ARRAY_BUFFER,buffer);
     gl.bufferData(gl.ARRAY_BUFFER,vertices,usage);
+    // An allocation this size can fail on modest hardware, and WebGL reports it
+    // by setting an error flag and drawing nothing rather than by throwing. A
+    // blank view with no message is the worst way to find that out.
+    const err = gl.getError();
+    if (err !== gl.NO_ERROR) {
+      throw new Error(`buffer upload failed (gl error ${err}) for `
+        + `${(vertices.length * 4 / 1048576).toFixed(1)} MB`);
+    }
   }
 
   geometry(buffer, count) {

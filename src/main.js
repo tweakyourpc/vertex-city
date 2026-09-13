@@ -47,7 +47,14 @@ const perf = new PerformanceTracker();
 const quality = new QualityController();
 let readable;
 try { readable = new ReadableRenderer(document.getElementById('geometry')); }
-catch { setAppearance('cinematic',screen); notify('Cityscape is unavailable on this device. Pixel view is ready.'); }
+catch (err) {
+  // Say what actually failed. Swallowing the reason left the surface views
+  // silently switching to pixel with no way to tell a missing WebGL context
+  // from a shader that would not compile.
+  console.error('[ascii-city] surface renderer unavailable:', err);
+  setAppearance('cinematic',screen);
+  notify(`Cityscape unavailable: ${String(err?.message || err).slice(0, 180)}`);
+}
 
 
 /** Everything that changes when a different city is loaded. */
@@ -378,7 +385,12 @@ function draw() {
     try { readable.draw(state.world,cam,screen,light,traffic,t,
       { wireframe: presentation.appearance === 'wireframe',
         palette: presentation.wirePalette, sunDir }); }
-    catch { readable = null; setAppearance('cinematic',screen); notify('Graphics interrupted. Switched to the pixel renderer.'); }
+    catch (err) {
+      console.error('[ascii-city] surface draw failed:', err);
+      readable = null;
+      setAppearance('cinematic',screen);
+      notify(`Graphics interrupted: ${String(err?.message || err).slice(0, 180)}`);
+    }
     screen.ctx.clearRect(0,0,screen.width,screen.height);
     // Keep the canonical depth buffer for picking and data-layer occlusion,
     // but let the GPU draw surfaces and the same simulated traffic.
