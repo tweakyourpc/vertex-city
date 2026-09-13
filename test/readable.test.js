@@ -459,3 +459,95 @@ test('a tunnel portal is not an intersection to paint a crossing at', () => {
     assert.ok(nearest < 3, `an intersection at y=${j.y.toFixed(1)}, ${nearest.toFixed(1)} cells from any cross street`);
   }
 });
+
+/* ------------------- stop lines and signals face traffic ----------------- */
+
+// One avenue crossed by one street, so each approach is unambiguous.
+function crossroads(avenueTags = {}) {
+  let n = 1;
+  const ids = new Map();
+  const nid = (x, y) => { const k = `${x},${y}`; if (!ids.has(k)) ids.set(k, n++); return ids.get(k); };
+  const along = []; for (let v = 0; v <= 180; v += 3) along.push(v);
+  const roads = [
+    { cls: 'primary', width: 13.5, nameId: 0, tags: avenueTags,
+      pts: along.map((y) => [90, y]), nodeIds: along.map((y) => nid(90, y)) },
+    { cls: 'residential', width: 4.2, nameId: 1, tags: {},
+      pts: along.map((x) => [x, 90]), nodeIds: along.map((x) => nid(x, 90)) },
+  ];
+  const graph = buildRoadGraph(roads, { signalPoints: [{ x: 90, y: 90 }] });
+  return {
+    graph,
+    world: {
+      buildings: [], roads, junctions: graph.junctions, roadGraph: graph,
+      streetNames: ['Park Avenue', 'E 33rd St'],
+      h: [0], type: [T.VOID], pal: [0], bid: [0], flags: [0], sample() { return 0; },
+    },
+  };
+}
+
+// On the avenue: narrow quads are crossing bars, one wide quad is the stop line.
+function avenueMarkings(vertices) {
+  const out = [];
+  for (let i = 0; i < vertices.length; i += STRIDE * 3) {
+    const t = [0, 1, 2].map((k) => [
+      vertices[i + k * STRIDE], vertices[i + k * STRIDE + 1], vertices[i + k * STRIDE + 2]]);
+    if (!t.every((p) => Math.abs(p[2] - CROSSING_PLANE) < 1e-4)) continue;
+    const xs = t.map((p) => p[0]), ys = t.map((p) => p[1]);
+    if (Math.min(...xs) < 82 || Math.max(...xs) > 98) continue;
+    out.push({ stopLine: Math.max(...xs) - Math.min(...xs) > 6,
+      y: (Math.min(...ys) + Math.max(...ys)) / 2 });
+  }
+  return out;
+}
+
+test('a stop line is behind its crossing, on the side traffic arrives from', () => {
+  const { world } = crossroads();
+  const marks = avenueMarkings(buildDistrict(world, { x: 90, y: 90 }, 145).vertices);
+  const bars = marks.filter((m) => !m.stopLine).map((m) => m.y);
+  const lines = [...new Set(marks.filter((m) => m.stopLine).map((m) => m.y))];
+  assert.equal(lines.length, 2, `${lines.length} stop lines on a two-way avenue`);
+
+  // A stop line between the crossing and the junction is a line telling a
+  // driver to stop once they are already standing on the crosswalk. It came
+  // from taking the polyline's own direction as the approach bearing, which
+  // points the same way on both sides of a junction.
+  for (const ly of lines) {
+    const side = bars.filter((y) => (ly < 90 ? y < 90 : y > 90));
+    assert.ok(side.length, `a stop line at ${ly} with no crossing on that side`);
+    const cy = (Math.min(...side) + Math.max(...side)) / 2;
+    assert.ok(Math.abs(ly - 90) > Math.abs(cy - 90),
+      `stop line at ${ly.toFixed(2)} is in front of its crossing at ${cy.toFixed(2)}`);
+  }
+});
+
+test('a one-way street is not told to stop at the crossing it drives away from', () => {
+  // Northbound only: the crossing beyond the junction is behind every driver
+  // who uses this street. A stop line there faces traffic that cannot legally
+  // exist, and so does a signal head.
+  const { world } = crossroads({ oneway: 'yes' });
+  const marks = avenueMarkings(buildDistrict(world, { x: 90, y: 90 }, 145).vertices);
+  const bars = marks.filter((m) => !m.stopLine).map((m) => m.y);
+  const lines = [...new Set(marks.filter((m) => m.stopLine).map((m) => m.y))];
+
+  // Both crossings stay: pedestrians cross on both sides of an intersection.
+  assert.ok(bars.some((y) => y < 90) && bars.some((y) => y > 90),
+    'a one-way street still gets a crossing on each side of the junction');
+  assert.equal(lines.length, 1, `${lines.length} stop lines on a one-way avenue`);
+  assert.ok(lines[0] < 90, 'the stop line is on the approach side');
+});
+
+test('every signalled approach gets its own mast, not one shared between two', () => {
+  const { world } = crossroads();
+  const { vertices } = buildDistrict(world, { x: 90, y: 90 }, 145);
+  // A mast pole rises from the ground to 3.15 cells; nothing else does.
+  const poles = new Set();
+  for (let i = 0; i < vertices.length; i += STRIDE) {
+    if (Math.abs(vertices[i + 2] - 3.15) < 1e-4) {
+      poles.add(`${vertices[i].toFixed(2)},${vertices[i + 1].toFixed(2)}`);
+    }
+  }
+  // Four corners to a pole, four approaches to a crossroads. Taking the
+  // polyline's direction as the bearing put each street's two masts at one
+  // point, so a four-way junction came out with two lights instead of four.
+  assert.equal(poles.size, 16, `${poles.size / 4} signal masts at a four-way junction`);
+});

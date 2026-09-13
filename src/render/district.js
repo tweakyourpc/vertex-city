@@ -124,17 +124,19 @@ function tree(mesh,x,y,seed) {
 }
 
 /**
- * A marked crossing across one approach to a junction.
+ * Which way traffic runs: +1 along the way, -1 against it, 0 both.
  *
- * Stripes run along the direction of traffic and repeat across the
- * carriageway, which is what makes a crossing legible from a car: you read the
- * bars side-on as you come up to them. Each bar is its own quad, so the
- * wireframe view outlines it as a closed rectangle for free, and the surface
- * view gets a flat painted marking a few millimetres above the asphalt.
- *
- * `ux,uy` is the road's direction, `px,py` the point on the centreline where
- * the crossing sits, and `width` the carriageway it has to span.
+ * Read in one place, because the crossings, the stop lines and the lane
+ * markings all depend on it and a city where they disagree is worse than one
+ * where they are all wrong the same way.
  */
+function onewayOf(tags={}) {
+  if(tags.oneway==='-1'||tags.oneway==='reverse') return -1;
+  if(tags.oneway==='yes'||tags.oneway==='1'||tags.oneway==='true'
+     ||tags.junction==='roundabout') return 1;
+  return 0;
+}
+
 /**
  * Distance along a polyline to each of its vertices.
  *
@@ -181,7 +183,19 @@ function nearestArc(pts,cum,px,py) {
   return best;
 }
 
-function crossing(mesh,px,py,ux,uy,width) {
+/**
+ * A marked crossing across one approach to a junction.
+ *
+ * Stripes run along the direction of traffic and repeat across the
+ * carriageway, which is what makes a crossing legible from a car: you read the
+ * bars side-on as you come up to them. Each bar is its own quad, so the
+ * wireframe view outlines it as a closed rectangle for free, and the surface
+ * view gets a flat painted marking a few millimetres above the asphalt.
+ *
+ * `ux,uy` is the road's direction, `px,py` the point on the centreline where
+ * the crossing sits, and `width` the carriageway it has to span.
+ */
+function crossing(mesh,px,py,ux,uy,width,stopLine=true) {
   const nx=-uy, ny=ux;                     // across the road
   const BAR=0.62, GAP=0.46, DEPTH=CROSS_DEPTH;
   const half=width/2+0.12;
@@ -189,7 +203,12 @@ function crossing(mesh,px,py,ux,uy,width) {
   // crossing, which is the thing a driver actually stops at. Drawn from the
   // shared constants, so what is painted and what the traffic stops behind
   // cannot drift apart.
-  {
+  //
+  // Only where traffic actually arrives. On a one-way street the crossing
+  // beyond the junction is on the far side of it in the direction of travel,
+  // and nobody ever drives up to that one: a line there tells a driver to stop
+  // who could not legally be facing it.
+  if(stopLine) {
     const back=DEPTH/2+STOP_LINE_GAP+STOP_LINE_DEPTH/2;
     const bx=px-ux*back, by=py-uy*back, d=STOP_LINE_DEPTH/2;
     mesh.quad([
@@ -391,8 +410,7 @@ function lamppost(mesh,lights,x,y) {
 export function laneMarkings(mesh,a,ux,uy,lo,hi,width,road,skip) {
   const nx=-uy, ny=ux, angle=Math.atan2(uy,ux);
   const tags=road.tags||{};
-  const oneway=tags.oneway==='yes'||tags.oneway==='1'||tags.oneway==='true'
-            || tags.oneway==='-1'||tags.junction==='roundabout';
+  const oneway=onewayOf(tags)!==0;
   const declared=parseInt(tags.lanes,10);
   const lanes=Number.isFinite(declared)&&declared>0
     ? declared : (oneway?2:2);
@@ -686,6 +704,7 @@ export function buildDistrict(world, cam, radius = 145) {
     if(['motorway','trunk','motorway_link','trunk_link'].includes(road.cls)) continue;
     const foot=['footway','path','pedestrian','steps','cycleway'].includes(road.cls);
     const width=road.width || 3.8;
+    const ow=onewayOf(road.tags);
     // Crossings belong to the intersection, not to a segment of road, so they
     // are measured out along the POLYLINE from the point where it passes the
     // intersection's centre. A surveyed way carries a vertex every few cells
@@ -704,10 +723,17 @@ export function buildDistrict(world, cam, radius = 145) {
       for(const step of [-1,1]) {
         const at=arcPoint(road.pts,arc,s0+step*0.01);
         if(!at) continue;
+        // Away from the junction, which is NOT the polyline's own direction:
+        // that points the same way whichever side of the junction you take, so
+        // both approaches to a street came out sharing one bearing. Their two
+        // crossings then took the same stop-line side, and their two signal
+        // masts were built at the same point one on top of the other, which is
+        // where half the lights and their name blades went.
+        const ux=at.ux*step, uy=at.uy*step;
         // The box is measured ALONG this approach. Setting back by the widest
         // street at the node regardless of bearing pushed an avenue's own
         // crossings half an avenue up the block.
-        const back=crossingCentreFor(boxHalfAlong(j,at.ux,at.uy)||width/2);
+        const back=crossingCentreFor(boxHalfAlong(j,ux,uy)||width/2);
         const p=arcPoint(road.pts,arc,s0+step*back);
         // The road ends before the crossing would: a stub, not an approach.
         if(!p) continue;
@@ -717,17 +743,24 @@ export function buildDistrict(world, cam, radius = 145) {
         // crossing is already at this spot on this bearing, not merely on this
         // bearing: a divided avenue needs one on each carriageway, and those
         // share a bearing while standing a median apart.
-        const side=(Math.round(Math.atan2(at.uy,at.ux)/(Math.PI/8))+16)%16;
+        const side=(Math.round(Math.atan2(uy,ux)/(Math.PI/8))+16)%16;
         if(drawnCrossings.some(c=>c.side===side&&Math.hypot(c.x-p.x,c.y-p.y)<CROSS_DEPTH)) continue;
         drawnCrossings.push({side,x:p.x,y:p.y});
         // The direction a driver on this approach is travelling: into the
         // junction, against the walk. The stop line is painted behind the
         // crossing along it, so the sign has to be the driver's, not the walk's.
-        const dirx=-p.ux, diry=-p.uy;
-        crossing(mesh,p.x,p.y,dirx,diry,width);
-        // Only where the simulation actually signals. A head at a junction the
-        // cars treat as uncontrolled is a light nobody obeys.
-        if(!j.signal) continue;
+        const dirx=-ux, diry=-uy;
+        // Whether a driver can legally be coming this way at all. `step` walks
+        // away from the junction, so a driver on this approach travels against
+        // it: on a one-way street only one of the two crossings is ever driven
+        // up to, and only that one gets a stop line and a signal facing it.
+        const approach=ow===0||(ow===1&&step<0)||(ow===-1&&step>0);
+        crossing(mesh,p.x,p.y,dirx,diry,width,approach);
+        // Only where the simulation actually signals, and only facing traffic
+        // that can arrive. A head at a junction the cars treat as uncontrolled
+        // is a light nobody obeys, and one facing the wrong way down a one-way
+        // street stops nobody at all.
+        if(!j.signal||!approach) continue;
         // Signals are furniture you read from close by. Building a mast, a
         // head and a lettered blade for every signalled approach in a 125 cell
         // district put a few hundred thousand vertices of unreadable text into
