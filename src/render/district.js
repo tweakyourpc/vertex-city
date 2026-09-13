@@ -163,7 +163,10 @@ const GLYPH = {
 function nameBlade(mesh,cx,cy,z,ux,uy,text) {
   const label=String(text||'').toUpperCase().slice(0,18);
   if(!label) return;
-  const nx=-uy, ny=ux;
+  // A viewer travelling along +u reads left to right along their own right
+  // hand, which is -n, not +n. Laying the glyphs out along +n mirrored every
+  // name: correct geometry, backwards text.
+  const nx=uy, ny=-ux;
   const PX=0.055;                          // one font pixel, in cells
   const cw=4*PX;                           // 3 wide plus a space
   const wide=label.length*cw;
@@ -266,7 +269,11 @@ function signalMast(mesh,lamps,px,py,ux,uy,width,group,offset,crossName) {
       [hx+fx+nx* r, hy+fy+ny* r, z-r],
       [hx+fx+nx* r, hy+fy+ny* r, z+r],
       [hx+fx+nx*-r, hy+fy+ny*-r, z+r],
-    ],[-ux,-uy,0],COL[i],7,i+group*4+offset*8);
+    // Quantised to 1/8 s. `precision mediump float` only guarantees a range of
+    // +/-16384, and packing at 1/64 pushed the seed past that into undefined
+    // territory; 1/8 keeps the largest seed near 2000 and is still far finer
+    // than a 32 second cycle needs.
+    ],[-ux,-uy,0],COL[i],7,i+group*4+Math.round(offset*8)*8);
   }
 }
 
@@ -492,14 +499,32 @@ export function buildDistrict(world, cam, radius = 145) {
         // Phase group from the approach bearing, so crossing streets alternate;
         // offset from the junction's own position, so the city does not switch
         // in unison. Both are deterministic, which keeps the mesh stable.
-        const group=Math.abs(dirx)>Math.abs(diry)?0:1;
-        const offset=Math.abs(Math.round(j.x*7+j.y*13))%32;
+        // Only where the simulation actually signals. A head at a junction the
+        // cars treat as uncontrolled is a light nobody obeys.
+        if(!j.signal) continue;
+        // Signals are furniture you read from close by. Building a mast, a
+        // head and a lettered blade for every signalled approach in a 125 cell
+        // district put a few hundred thousand vertices of unreadable text into
+        // the buffer; the name alone is up to 90 quads a character.
+        const jd=Math.hypot(j.x-cx,j.y-cy);
+        if(jd>72) continue;
+        // The phase has to be the one the cars read, not a parallel derivation
+        // of it. The simulation takes the group from the junction's own
+        // approach records and the offset from the node id; computing them here
+        // from bearing and position gave a different signal that merely looked
+        // like one, which is why traffic ignored the colour.
+        let group=0,bestDot=-2;
+        for(const ap of j.approaches||[]) {
+          const d=(-dirx)*ap.dx+(-diry)*ap.dy;
+          if(d>bestDot){bestDot=d;group=ap.group|0;}
+        }
+        const offset=(((j.id*0.17)%32)+32)%32;
         // The head goes on the far kerb, past the junction, so a driver at the
         // line looks across the intersection at it rather than up at a pole
         // beside them. The blade names the street being crossed.
         const fx=j.x+dirx*(width/2+2.2), fy=j.y+diry*(width/2+2.2);
         signalMast(mesh,beacons,fx,fy,dirx,diry,width,group,offset,
-          crossStreetName(world,nearRoads,j,dirx,diry));
+          jd<46?crossStreetName(world,nearRoads,j,dirx,diry):'');
       }
       if(!foot) for(let d=Math.ceil(lo/4)*4;d<hi;d+=4) {
         if(nearbyJunctions.some(j=>Math.hypot(j.x-(a[0]+ux*d),j.y-(a[1]+uy*d))<width+1)) continue;

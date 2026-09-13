@@ -243,9 +243,15 @@ export class Traffic {
         }
         if (kind === 'ped') {
           // Either pavement, and a walking pace rather than a driving one.
-          const side = this._random() < 0.5 ? 1 : -1;
-          const w = positionOnEdge(graph, edge, distance,
-            walkOffsetForEdge(edge) * side);
+          // Spawn onto pavement, not into the road, for the same reason.
+          let side = this._random() < 0.5 ? 1 : -1;
+          const woff = walkOffsetForEdge(edge);
+          if (world.type[world.sample(
+                positionOnEdge(graph, edge, distance, woff * side).x,
+                positionOnEdge(graph, edge, distance, woff * side).y)] === T.ROAD) {
+            side = -side;
+          }
+          const w = positionOnEdge(graph, edge, distance, woff * side);
           this.agents.push({
             kind, edgeId: edge.id, distance, walkSide: side,
             x: w.x, y: w.y, renderX: w.x, renderY: w.y,
@@ -450,14 +456,20 @@ export class Traffic {
       // 16 m jump where a walking step is 2 cm, which reads as vanishing and
       // reappearing down the block. Turning a corner still moves them a little
       // sideways, and the render smoothing below absorbs that.
+      // Prefer a side that is actually pavement, then the one that keeps the
+      // walk continuous. A road graph's centreline is not necessarily centred
+      // in the road it was rasterised from, so a symmetric offset can be clear
+      // of the kerb on one side and still in the carriageway on the other.
       const off = walkOffsetForEdge(edge);
-      let best = a.walkSide || 1, bestD = Infinity;
-      const ez = Math.max(0.3, Math.min(1,
+      const ez = Math.max(0.8, Math.min(1,
         a.distance / 2.5, (edge.length - a.distance) / 2.5));
+      let best = a.walkSide || 1, bestScore = -Infinity;
       for (const sd of [1, -1]) {
         const c = positionOnEdge(graph, edge, a.distance, off * sd * ez);
-        const d = (c.x - a.x) ** 2 + (c.y - a.y) ** 2;
-        if (d < bestD) { bestD = d; best = sd; }
+        const paved = this.world.type[this.world.sample(c.x, c.y)] !== T.ROAD;
+        const near = -((c.x - a.x) ** 2 + (c.y - a.y) ** 2);
+        const score = (paved ? 1e6 : 0) + near;
+        if (score > bestScore) { bestScore = score; best = sd; }
       }
       a.walkSide = best;
     }
@@ -468,10 +480,24 @@ export class Traffic {
     // offset to the last centimetre teleports the walker across that gap the
     // instant the edge changes. Easing leaves a small, smoothable step and
     // reads as someone walking to the corner and turning.
-    const ease = Math.max(0.3, Math.min(1,
+    // The floor has to keep the walker outside the carriageway. At 0.3 of a
+    // 2.7-cell offset they stood 0.8 cells from the centreline, which is in the
+    // road: that is why people were strolling through traffic at every corner.
+    // 0.8 rounds the corner without ever leaving the kerb.
+    const ease = Math.max(0.8, Math.min(1,
       a.distance / 2.5, (edge.length - a.distance) / 2.5));
-    const p = positionOnEdge(graph, edge, a.distance,
-      walkOffsetForEdge(edge) * (a.walkSide || 1) * ease);
+    // Step out until the ground is walkable. A nominal carriageway width is not
+    // the rasterised one: near a junction the road box is wider than the lane
+    // table says, so a fixed offset left about a fifth of all walkers standing
+    // in the road. Asking the world costs a few samples per person per frame
+    // and is the only thing that knows where the kerb actually is.
+    const side = a.walkSide || 1;
+    const base = walkOffsetForEdge(edge) * ease;
+    let p = positionOnEdge(graph, edge, a.distance, base * side);
+    for (let extra = 0.6; extra <= 2.4; extra += 0.6) {
+      if (this.world.type[this.world.sample(p.x, p.y)] !== T.ROAD) break;
+      p = positionOnEdge(graph, edge, a.distance, (base + extra) * side);
+    }
     a.x = p.x;
     a.y = p.y;
     if (!Number.isFinite(a.renderX) || !Number.isFinite(a.renderY)) {

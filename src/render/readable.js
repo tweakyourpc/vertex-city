@@ -82,8 +82,11 @@ void main() {
     // crossing group shifted half a cycle. The two must agree, or cars will
     // stop for a light that looks green.
     if (kind > 6.5) {
-      float off = floor(vSeed / 8.0);
-      float rem = vSeed - off * 8.0;
+      // Offset is packed at 1/8 s: fine enough that the drawn lamp tracks the
+      // obeyed one, coarse enough that the seed stays inside mediump range.
+      float packed = floor(vSeed / 8.0);
+      float off = packed / 8.0;
+      float rem = vSeed - packed * 8.0;
       float grp = floor(rem / 4.0);
       float lamp = rem - grp * 4.0;
       float phase = mod(time + off + grp * 16.0, 32.0);
