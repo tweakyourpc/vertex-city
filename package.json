@@ -13,7 +13,8 @@
     "test": "node --test --test-concurrency=2 test/*.test.js",
     "lint": "eslint .",
     "check": "npm run lint && npm test",
-    "browser:check": "node tools/browser-v3.mjs"
+    "browser:check": "node tools/browser-v3.mjs",
+    "shader:check": "node tools/shader-check.mjs"
   },
   "keywords": [
     "ascii",

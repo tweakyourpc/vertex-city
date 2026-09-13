@@ -84,9 +84,12 @@ void main() {
     if (kind > 6.5) {
       // Offset is packed at 1/8 s: fine enough that the drawn lamp tracks the
       // obeyed one, coarse enough that the seed stays inside mediump range.
-      float packed = floor(vSeed / 8.0);
-      float off = packed / 8.0;
-      float rem = vSeed - packed * 8.0;
+      // Do not name anything "packed" here: it is a reserved word in GLSL ES
+      // 1.0, and using it fails the whole fragment program, which takes both
+      // surface views down with it.
+      float bits = floor(vSeed / 8.0);
+      float off = bits / 8.0;
+      float rem = vSeed - bits * 8.0;
       float grp = floor(rem / 4.0);
       float lamp = rem - grp * 4.0;
       float phase = mod(time + off + grp * 16.0, 32.0);
