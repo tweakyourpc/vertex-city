@@ -395,6 +395,12 @@ function draw() {
     // Keep the canonical depth buffer for picking and data-layer occlusion,
     // but let the GPU draw surfaces and the same simulated traffic.
     screen.kind.fill(0); screen.glyph.fill(undefined); skyMarks.reset();
+    // The surface views paint their own sky on the GPU canvas, but the sun,
+    // moon, planets and stars live in the character grid on top of it. Placing
+    // them after the clear puts the real sky over the rendered city instead of
+    // leaving the astronomy switched off in two of the four styles.
+    drawSky(screen, cam, light, state.site, jd, sp, sunAlt, dayK, sim, skyMarks,
+      { bodiesOnly: true });
   } else {
     drawSky(screen, cam, light, state.site, jd, sp, sunAlt, dayK, sim, skyMarks);
   }

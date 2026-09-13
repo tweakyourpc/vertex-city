@@ -37,9 +37,19 @@ function place(screen, cam, marks, o, alt, az, glyph, colour) {
   return true;
 }
 
-export function drawSky(screen, cam, L, site, jd, sun, sunAlt, dayK, when, marks) {
+/**
+ * @param {object} [options]
+ * @param {boolean} [options.bodiesOnly] Place the sun, moon, planets and stars
+ *   but paint no sky behind them. The surface views render their own sky on
+ *   the GPU canvas underneath the character grid, so the astronomy belongs
+ *   there too: without this the choice was a sky with no sun in it, or a flat
+ *   fill painted straight over the 3D city.
+ */
+export function drawSky(screen, cam, L, site, jd, sun, sunAlt, dayK, when, marks,
+                        { bodiesOnly = false } = {}) {
   const { ctx, cols, cw, ch, skyEnd } = screen;
 
+  if (!bodiesOnly) {
   ctx.fillStyle = '#000';
   ctx.fillRect(0, 0, screen.width, screen.height);
 
@@ -52,11 +62,6 @@ export function drawSky(screen, cam, L, site, jd, sun, sunAlt, dayK, when, marks
   // Add subtle horizon glow during sunrise/sunset
   if (Math.abs(sunAlt) < 15) {
     const glowK = 1 - Math.abs(sunAlt) / 15;
-    const _glowCol = col2str(
-      Math.min(255, 200 + 55 * glowK),
-      Math.min(255, 150 + 100 * glowK),
-      Math.min(255, 50 + 200 * glowK)
-    );
     ctx.fillStyle = `rgba(255,200,100,${0.3 * glowK})`;
     ctx.fillRect(0, 0, screen.width, Math.max(1, cam.hz * ch * 0.15));
     ctx.fillStyle = grad;
@@ -90,6 +95,7 @@ export function drawSky(screen, cam, L, site, jd, sun, sunAlt, dayK, when, marks
         ctx.fillRect(x * cw, start * ch, cw + 1, (y - start) * ch);
       }
     }
+  }
   }
 
   if (marks) marks.reset();

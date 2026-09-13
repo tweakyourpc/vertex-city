@@ -1,5 +1,5 @@
 import { T, F, hash } from '../world/source.js';
-import { FLOOR_H } from '../config.js';
+import { FLOOR_H, CROSS_SETBACK, CROSS_DEPTH, STOP_LINE_DEPTH, STOP_LINE_GAP } from '../config.js';
 
 /**
  * Vertex layout: position(3) normal(3) colour(3) uv(2) kind(1) seed(1)
@@ -110,8 +110,22 @@ function tree(mesh,x,y,seed) {
  */
 function crossing(mesh,px,py,ux,uy,width) {
   const nx=-uy, ny=ux;                     // across the road
-  const BAR=0.62, GAP=0.46, DEPTH=2.35;    // metres, in cells
+  const BAR=0.62, GAP=0.46, DEPTH=CROSS_DEPTH;
   const half=width/2+0.12;
+  // The stop line: one solid transverse bar on the approach side of the
+  // crossing, which is the thing a driver actually stops at. Drawn from the
+  // shared constants, so what is painted and what the traffic stops behind
+  // cannot drift apart.
+  {
+    const back=DEPTH/2+STOP_LINE_GAP+STOP_LINE_DEPTH/2;
+    const bx=px-ux*back, by=py-uy*back, d=STOP_LINE_DEPTH/2;
+    mesh.quad([
+      [bx+nx*-half-ux*d, by+ny*-half-uy*d, .067],
+      [bx+nx* half-ux*d, by+ny* half-uy*d, .067],
+      [bx+nx* half+ux*d, by+ny* half+uy*d, .067],
+      [bx+nx*-half+ux*d, by+ny*-half+uy*d, .067],
+    ],[0,0,1],[.93,.93,.90]);
+  }
   // Step out from the centreline both ways so the pattern stays centred on the
   // road however wide it is, instead of starting at one kerb and running short.
   for(let o=-half;o<half-BAR*0.5;o+=BAR+GAP) {
@@ -491,7 +505,7 @@ export function buildDistrict(world, cam, radius = 145) {
         const jx=end?b[0]:a[0], jy=end?b[1]:a[1];
         const j=nearbyJunctions.find(n2=>Math.hypot(n2.x-jx,n2.y-jy)<2.5);
         if(!j) continue;
-        const back=width/2+2.4;
+        const back=width/2+CROSS_SETBACK;
         const d=end?len-back:back;
         if(d<lo||d>hi) continue;
         const dirx=end?ux:-ux, diry=end?uy:-uy;

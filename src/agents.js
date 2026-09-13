@@ -1,6 +1,6 @@
 import { T, wrap } from './world/source.js';
 import { normAngle } from './camera.js';
-import { BLOCK, FOV, MAXD, MAX_CARS, MAX_PEDS, AGENT_CULL_D2, METERS_PER_CELL, PED_HEIGHT, PED_WIDTH } from './config.js';
+import { BLOCK, FOV, MAXD, MAX_CARS, MAX_PEDS, AGENT_CULL_D2, METERS_PER_CELL, PED_HEIGHT, PED_WIDTH, stopLineFor } from './config.js';
 import { fogOf } from './render/materials.js';
 import { positionOnEdge } from './world/roadgraph.js';
 import { buildEdgeIndex } from './spatial.js';
@@ -493,22 +493,49 @@ export class Traffic {
     // and is the only thing that knows where the kerb actually is.
     const side = a.walkSide || 1;
     const base = walkOffsetForEdge(edge) * ease;
-    let p = positionOnEdge(graph, edge, a.distance, base * side);
-    for (let extra = 0.6; extra <= 2.4; extra += 0.6) {
-      if (this.world.type[this.world.sample(p.x, p.y)] !== T.ROAD) break;
-      p = positionOnEdge(graph, edge, a.distance, (base + extra) * side);
+    // Test each candidate before accepting it. The previous loop checked the
+    // one it already held and then reassigned, so the furthest step out was
+    // never examined at all and could be road like the rest.
+    let p = null;
+    for (let extra = 0; extra <= 3.0; extra += 0.5) {
+      const c = positionOnEdge(graph, edge, a.distance, (base + extra) * side);
+      if (!p) p = c;
+      if (this.world.type[this.world.sample(c.x, c.y)] !== T.ROAD) { p = c; break; }
     }
-    a.x = p.x;
-    a.y = p.y;
+    // The graph position is where this walker is *heading*, not where they are.
+    // Assigning it outright is what teleported people: the pavement offset can
+    // change by a couple of cells in a frame when it steps out to find real
+    // ground, and turning a corner swings it further still, neither of which a
+    // person can do in a sixtieth of a second. Walk toward it instead, a little
+    // faster than a stroll so corners are caught up within a step or two, and
+    // never faster than that. Nothing else can then move them discontinuously.
+    if (!Number.isFinite(a.x) || !Number.isFinite(a.y)) { a.x = p.x; a.y = p.y; }
+    const dx = p.x - a.x, dy = p.y - a.y;
+    const want = Math.hypot(dx, dy);
+    const stride = a.spd * dt * 1.8;
+    if (want > stride && want > 1e-6) {
+      a.x += (dx / want) * stride;
+      a.y += (dy / want) * stride;
+    } else {
+      a.x = p.x;
+      a.y = p.y;
+    }
+    // Face the direction actually walked, so someone rounding a corner turns
+    // through it rather than snapping to the new street's bearing.
+    if (want > 1e-4) {
+      const bl = 1 - Math.exp(-Math.max(0, dt) * 8);
+      a.hx += ((dx / want) - a.hx) * bl;
+      a.hy += ((dy / want) - a.hy) * bl;
+      const hl = Math.hypot(a.hx, a.hy) || 1;
+      a.hx /= hl; a.hy /= hl;
+    }
     if (!Number.isFinite(a.renderX) || !Number.isFinite(a.renderY)) {
-      a.renderX = p.x; a.renderY = p.y;
+      a.renderX = a.x; a.renderY = a.y;
     } else {
       const blend = 1 - Math.exp(-Math.max(0, dt) * 13);
-      a.renderX += (p.x - a.renderX) * blend;
-      a.renderY += (p.y - a.renderY) * blend;
+      a.renderX += (a.x - a.renderX) * blend;
+      a.renderY += (a.y - a.renderY) * blend;
     }
-    a.hx = edge.dx;
-    a.hy = edge.dy;
   }
 
   _updateGraphCar(a, dt, agents, now = Date.now() / 1000) {
@@ -527,8 +554,17 @@ export class Traffic {
     // and its bars are 2.35 deep, so the line is behind all of that.
     const lanes = Number.isFinite(edge.width)
       ? edge.width : (ROAD_WIDTH_CELLS[edge.cls] ?? 3.38);
-    const stopBack = lanes / 2 + 3.7;
-    if (node.signal && remaining < stopBack + 9) {
+    // `distance` is the car's CENTRE, so stopping the centre on the line put
+    // half a car length of bonnet across the crossing. The bumper is what has
+    // to be behind the line, and the line itself comes from the same constants
+    // the renderer paints it with.
+    const stopBack = stopLineFor(lanes) + a.vehicle.length / 2;
+    // Only brake for the light while there is still room to stop behind the
+    // line. Past it the car is committed: braking there is what parked cars
+    // across the crossing and left them in the box when the phase changed, and
+    // it is not what a driver does either. Once over the line you go through.
+    const canStillStop = remaining > stopBack;
+    if (node.signal && remaining < stopBack + 9 && canStillStop) {
       const group = signalGroupForIncoming(graph, node, edge);
       const state = signalState(now, group, node.id * 0.17);
       if (state !== 'green') {
@@ -605,7 +641,7 @@ export class Traffic {
     // that ends inside the box is what leaves a car stranded across the cross
     // street when the phase changes: it is out of everyone's way only if there
     // is somewhere for it to be on the far side first.
-    if (node.signal && remaining < stopBack + 1.5) {
+    if (node.signal && remaining < stopBack + 1.5 && canStillStop) {
       // Only cars going roughly my way are my queue. Using the general gap
       // counted the cross traffic stopped at its own red as though it were
       // blocking my exit, so cars refused to move on green while the junction

@@ -167,6 +167,28 @@ export const FACADE = [
 // A city street should look occupied. These were tuned when agents were cheap
 // raster sprites and pedestrians barely moved; both now route the road graph,
 // and an empty Manhattan reads as a model rather than a place.
+/* ------------------------------- crossings ------------------------------ */
+
+/**
+ * Crossing and stop-line geometry, in cells, measured back from the junction
+ * node along the approach.
+ *
+ * These live here because two places have to agree about them: the renderer
+ * that paints the bars and the line, and the traffic that has to stop behind
+ * them. When each kept its own numbers, cars held their red with the front
+ * half of the car across the crossing.
+ */
+export const CROSS_SETBACK = 2.4;    // crossing centre, beyond the half-carriageway
+export const CROSS_DEPTH = 2.35;     // depth of the bars, along the road
+export const STOP_LINE_DEPTH = 0.45; // the solid transverse bar
+export const STOP_LINE_GAP = 0.35;   // clear asphalt between line and crossing
+
+/** Distance back from the node at which a stopping car's FRONT BUMPER belongs. */
+export function stopLineFor(carriageway) {
+  return carriageway / 2 + CROSS_SETBACK + CROSS_DEPTH / 2
+       + STOP_LINE_GAP + STOP_LINE_DEPTH;
+}
+
 export const MAX_CARS = 60;
 export const MAX_PEDS = 110;
 export const AGENT_CULL_D2 = 8100;     // squared cells
