@@ -1,19 +1,43 @@
-# ASCII City 2.1: Street Level
+# ASCII City v3, Field Study
 
-![ASCII City 2 daylight streetscape](docs/hero.png)
+![ASCII City v3: a wireframe city at night, cyan towers over an amber street grid](docs/hero.png)
 
-Walk or fly through a living ASCII city in your browser. Load real streets and
-buildings from OpenStreetMap or explore the deterministic procedural skyline.
+**A real city, drawn as light.**
 
-This is a separate revision of [the original ASCII City](https://github.com/tweakyourpc/ascii-city),
-with its own history and repository.
+Walk or fly a real place in your browser. The streets and buildings are
+surveyed OpenStreetMap geometry, the sky is astronomically correct for that
+location and hour, and the weather and aircraft overhead are live. None of it
+pretends to be a photograph.
+
+Four ways to see the same city:
+
+| | |
+| --- | --- |
+| **Cityscape** | solid surfaces, sunlight, lit windows after dark |
+| **Wireframe** | the geometry as glowing edges, in five colour schemes |
+| **ASCII** | the character study this began as |
+| **Pixel** | a half-block cinematic compositor |
+
+Where the survey runs out, a generated substrate carries the city to the
+horizon, scaled to the skyline of the place it surrounds, and every invented
+cell is marked as such. In the wireframe view the frontier has its own colour:
+you can stand on a roof and see where the map's knowledge ends.
+
+This is a separate revision of [the original ASCII City](https://github.com/tweakyourpc/ascii-city)
+and of [v2](https://github.com/tweakyourpc/ascii-city-2), with its own history
+and repository.
 
 ## What is new
 
-- Version 2.1.0 introduces human-scale walking, smooth starts and stops, separate
-  walking and flying modes, corrected pedestrian proportions, and cinematic
-  rendering that preserves both vertical detail rows. Sidewalk and storefront
-  improvements are planned for a later pass.
+- A WebGL surface renderer with two looks: Cityscape, and a Wireframe view that
+  outlines real faces rather than the triangulation behind them.
+- Beyond the mapped extract, a generated substrate reaching the horizon, with its
+  density and its skyline both taken from the extract it surrounds.
+- Signals on mast arms over the carriageway, with lettered street-name blades,
+  marked crossings and stop lines. What is drawn and what the traffic obeys come
+  from the same constants and the same clock.
+- Human-scale walking, separate walking and flying modes, and pedestrians that
+  route the street network instead of pacing a raster axis.
 - Cars follow a directed street graph, choose random routes, keep their lane,
   maintain headway, and brake for signals instead of bouncing between raster cells.
 - Street signs face approaching traffic and name the cross street, not the street
@@ -142,7 +166,7 @@ Auto-tour, cyclists, and the remaining street-life improvements are later milest
 
 The HUD is docked on the left by default so it does not cover the city. Use
 `A−` / `A+` to resize it independently of browser zoom, `FLOAT` to overlay it,
-or drag the `ASCII CITY 2.1` handle to place it anywhere. `QUALITY` cycles
+or drag the `ASCII CITY` handle to place it anywhere. `QUALITY` cycles
 all rendering modes between adaptive and fixed scales. The layout is saved
 locally in the browser.
 
