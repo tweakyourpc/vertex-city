@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { Mesh, buildDistrict, buildMovers, triangulate, STRIDE } from '../src/render/district.js';
+import { Mesh, buildDistrict, buildMovers, triangulate, laneMarkings, STRIDE } from '../src/render/district.js';
 import { Lighting } from '../src/render/materials.js';
 import { T } from '../src/world/source.js';
 import { ProceduralWorld } from '../src/world/procedural.js';
@@ -205,4 +205,52 @@ test('generated roofs are not given the facade material', () => {
       assert.ok(roofKind >= SIM, 'the roof must keep its provenance bit');
     }
   }
+});
+
+/**
+ * Lane markings follow what the map says about the road.
+ *
+ * Yellow separates opposing directions, so it must never appear on a one-way
+ * street; white separates lanes running the same way. Previously every road got
+ * the same single dashed line down the middle whatever OSM said about it.
+ */
+test('lane markings read oneway and lanes from the map', () => {
+  const YELLOW = [0.93, 0.78, 0.24];
+  const near = (v, t) => Math.abs(v - t) < 0.02;
+  const paint = (tags, cls = 'residential') => {
+    const mesh = new Mesh();
+    const road = { cls, tags, pts: [[0,0],[40,0]] };
+    // laneMarkings is exercised through buildDistrict's own call shape.
+    const ux = 1, uy = 0;
+    const seen = { yellow: 0, white: 0 };
+    // Re-implement the colour census over what the mesh received.
+    laneMarkings(mesh, [0,0], ux, uy, 0, 40, 3.8, road, () => false);
+    const d = mesh.array();
+    for (let i = 0; i < d.length; i += STRIDE) {
+      if (near(d[i+6], YELLOW[0]) && near(d[i+7], YELLOW[1]) && near(d[i+8], YELLOW[2])) {
+        seen.yellow++;
+      } else if (d[i+6] > 0.88 && d[i+7] > 0.88 && d[i+8] > 0.85) {
+        seen.white++;
+      }
+    }
+    return seen;
+  };
+
+  const twoWay = paint({});
+  assert.ok(twoWay.yellow > 0, 'a two-way street needs a yellow centre line');
+
+  const oneWay = paint({ oneway: 'yes', lanes: '3' });
+  assert.equal(oneWay.yellow, 0,
+    'a one-way street has nothing coming the other way, so no yellow line');
+  assert.ok(oneWay.white > 0, 'three one-way lanes need white dividers between them');
+
+  // A single-lane one-way street has no interior boundary to mark at all.
+  const single = paint({ oneway: 'yes', lanes: '1' });
+  assert.equal(single.yellow, 0);
+  assert.equal(single.white, 0, 'one lane has no divider');
+
+  // Overtaking is not permitted on a primary road, so its centre is solid.
+  const primary = paint({}, 'primary');
+  assert.ok(primary.yellow > twoWay.yellow,
+    'a solid double centre line uses more paint than a dashed single one');
 });

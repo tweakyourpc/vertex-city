@@ -329,6 +329,62 @@ function lamppost(mesh,lights,x,y) {
   lights.disc(x,y,.03,3.2,[1,.82,.48],5);
 }
 
+/**
+ * Lane markings, from what the map actually says about the road.
+ *
+ * OSM carries `oneway` and `lanes`, and the road class tells you the rest, so
+ * the paint can follow the convention instead of being one dashed line down
+ * everything. Yellow separates opposing directions and therefore never appears
+ * on a one-way street; white separates lanes running the same way. Solid means
+ * do not cross it, dashed means you may.
+ *
+ * `skip` rejects a distance that falls inside a junction, because markings stop
+ * at the box and start again beyond it.
+ */
+export function laneMarkings(mesh,a,ux,uy,lo,hi,width,road,skip) {
+  const nx=-uy, ny=ux, angle=Math.atan2(uy,ux);
+  const tags=road.tags||{};
+  const oneway=tags.oneway==='yes'||tags.oneway==='1'||tags.oneway==='true'
+            || tags.oneway==='-1'||tags.junction==='roundabout';
+  const declared=parseInt(tags.lanes,10);
+  const lanes=Number.isFinite(declared)&&declared>0
+    ? declared : (oneway?2:2);
+  const YELLOW=[.93,.78,.24], WHITE=[.91,.91,.88];
+  // A centre line on a big road is solid: crossing it is not permitted.
+  const noPassing=['motorway','trunk','primary','secondary'].includes(road.cls);
+
+  const put=(d,len,off,colour)=>{
+    mesh.box(a[0]+ux*d+nx*off, a[1]+uy*d+ny*off,
+      DASH_Z, len, .065, .003, angle, colour);
+  };
+  const run=(off,colour,dashed)=>{
+    const step=dashed?4:2.2, len=dashed?1.8:2.2;
+    for(let d=Math.ceil(lo/step)*step; d<hi; d+=step) {
+      if(skip(d)) continue;
+      put(d,len,off,colour);
+    }
+  };
+
+  if(oneway) {
+    // No centre line: nothing is coming the other way. Lanes are divided in
+    // white, and only where there is more than one of them.
+    const span=width/lanes;
+    for(let i=1;i<lanes;i++) run(-width/2+i*span, WHITE, true);
+    return;
+  }
+
+  // Two-way: yellow down the middle, doubled and solid where overtaking is not
+  // allowed, and white between the lanes running the same way.
+  if(noPassing) { run(-0.13, YELLOW, false); run(0.13, YELLOW, false); }
+  else run(0, YELLOW, true);
+
+  const perSide=Math.max(1, Math.floor(lanes/2));
+  const half=width/2, span=half/perSide;
+  for(let side of [-1,1]) {
+    for(let i=1;i<perSide;i++) run(side*i*span, WHITE, true);
+  }
+}
+
 function frontage(mesh,a,b,height,seed,colour) {
   const dx=b[0]-a[0],dy=b[1]-a[1],len=Math.hypot(dx,dy);
   if(len < 1) return;
@@ -625,9 +681,13 @@ export function buildDistrict(world, cam, radius = 145) {
         signalMast(mesh,beacons,fx,fy,dirx,diry,width,group,offset,
           jd<46?crossStreetName(world,nearRoads,j,dirx,diry):'');
       }
-      if(!foot) for(let d=Math.ceil(lo/4)*4;d<hi;d+=4) {
-        if(nearbyJunctions.some(j=>Math.hypot(j.x-(a[0]+ux*d),j.y-(a[1]+uy*d))<width+1)) continue;
-        mesh.box(a[0]+ux*d,a[1]+uy*d,DASH_Z,1.8,.065,.003,angle,[.92,.86,.61]);
+      if(!foot) {
+        // Markings stop at a junction box and resume beyond it.
+        const skip=(d)=>nearbyJunctions.some(j=>{
+          const reach=(j.boxHalf??width/2)+CROSS_DEPTH+STOP_LINE_GAP+1.2;
+          return Math.hypot(j.x-(a[0]+ux*d), j.y-(a[1]+uy*d))<reach;
+        });
+        laneMarkings(mesh,a,ux,uy,lo,hi,width,road,skip);
       }
       // Step on a grid measured along the road itself, and alternate which
       // kerb each piece lands on, the way street furniture is actually spaced.
