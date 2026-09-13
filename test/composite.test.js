@@ -11,9 +11,10 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { OsmWorld } from '../src/world/osm.js';
-import { CompositeWorld } from '../src/world/composite.js';
+import { CompositeWorld, heightScaleFor } from '../src/world/composite.js';
 import { DEMO_BBOX, DEMO_ELEMENTS } from '../src/world/demo-city.js';
 import { T, F } from '../src/world/source.js';
+import { METERS_PER_CELL } from '../src/config.js';
 
 const extract = () => new OsmWorld(DEMO_BBOX, DEMO_ELEMENTS, 'Demo', { enrich: true });
 
@@ -93,4 +94,73 @@ test('the extract keeps its identity and spawn', () => {
   assert.deepEqual(world.spawn(), osm.spawn());
   // The skyline bound has to cover both layers or the DDA early-out clips.
   assert.ok(world.maxHeight >= osm.maxHeight);
+});
+
+/**
+ * The substrate's skyline has to come from the city it surrounds. Its own
+ * profile is a generic downtown topping out near 65 m, and stamping that around
+ * a low-rise extract invents a horizon of towers that are not there, which is
+ * the thing standing order 5 exists to prevent.
+ */
+function extractOfHeight(metres) {
+  const W = 240, H = 240, n = W * H;
+  const cells = metres / METERS_PER_CELL;
+  const o = {
+    width: W, height: H, voidSlot: n, label: 'test', bbox: [0, 0, 1, 1],
+    lat: 27, lon: -82, maxHeight: cells,
+    h: new Float32Array(n + 1), type: new Uint8Array(n + 1),
+    rnd: new Float32Array(n + 1), lamp: new Float32Array(n + 1),
+    pal: new Uint8Array(n + 1), mat: new Uint8Array(n + 1),
+    flags: new Uint8Array(n + 1), bid: new Uint16Array(n + 1),
+    roadCells: [], roads: [], junctions: [], buildings: [null], streetNames: [],
+    sample(x, y) {
+      const a = Math.floor(x), b = Math.floor(y);
+      return a < 0 || a >= W || b < 0 || b >= H ? n : b * W + a;
+    },
+    spawn() { return { x: 120, y: 120, angle: 0 }; },
+    randomRoadCell() { return null; },
+  };
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      if ((x * 7 + y * 13) % 23 > 4) continue;
+      const s = y * W + x;
+      o.type[s] = T.HOUSE;
+      o.h[s] = cells * (0.7 + ((x * 31 + y * 17) % 100) / 330);
+    }
+  }
+  return o;
+}
+
+test('generated surroundings inherit the extract own skyline', () => {
+  const low = new CompositeWorld(extractOfHeight(12));
+  const tall = new CompositeWorld(extractOfHeight(150));
+  assert.ok(low.heightScale < 0.45,
+    `a 12 m city must not be ringed by towers: scale ${low.heightScale}`);
+  assert.ok(tall.heightScale > low.heightScale * 3,
+    'a tall city must produce a taller substrate than a low-rise one');
+
+  const p90 = (world) => {
+    const hs = [];
+    for (let y = 250; y < 380; y += 2) {
+      for (let x = 90; x < 240; x += 2) {
+        const s = world.sample(x, y);
+        const t = world.type[s];
+        if (t === T.TOWER || t === T.HOUSE) hs.push(world.h[s] * METERS_PER_CELL);
+      }
+    }
+    hs.sort((a, b) => a - b);
+    return hs.length ? hs[Math.floor(hs.length * 0.9)] : 0;
+  };
+  const lowP90 = p90(low);
+  assert.ok(lowP90 < 26,
+    `low-rise surroundings reached ${lowP90.toFixed(0)} m, which is a skyline it does not have`);
+  assert.ok(p90(tall) > lowP90 * 2, 'a tall city must build taller surroundings');
+});
+
+test('an extract with nothing built in it keeps the default skyline', () => {
+  // No buildings at all is not evidence of a flat city, just of a thin
+  // extract, so the substrate should not flatten itself to nothing.
+  const bare = extractOfHeight(20);
+  bare.type.fill(0);
+  assert.equal(heightScaleFor(bare), 1);
 });

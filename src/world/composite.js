@@ -18,11 +18,41 @@
  * frontier honestly instead of letting invention pass as survey.
  */
 import { ProceduralWorld } from './procedural.js';
-import { CHUNK, F } from './source.js';
+import { CHUNK, F, T } from './source.js';
 import { WORLD, MAXD } from '../config.js';
 
 /** Where the substrate's own profile stops placing buildings, in cells. */
 const BUILT_RADIUS = 480;
+
+/** The substrate's own 90th-percentile building height, in cells. */
+const SUBSTRATE_P90 = 27.5;
+
+/**
+ * How much to scale generated building heights so the surroundings match the
+ * extract's own skyline.
+ *
+ * Uses the 90th percentile rather than the tallest, so one cathedral or a
+ * single outlier tower does not set the height of a whole county. An extract
+ * with almost nothing built in it falls back to 1: better a generic city than
+ * a flat plain, and the provenance flag says it is invented either way.
+ */
+export function heightScaleFor(osm) {
+  const heights = [];
+  const step = Math.max(1, Math.floor(Math.min(osm.width, osm.height) / 220));
+  for (let y = 0; y < osm.height; y += step) {
+    const row = y * osm.width;
+    for (let x = 0; x < osm.width; x += step) {
+      const slot = row + x;
+      const t = osm.type[slot];
+      if (t !== T.HOUSE && t !== T.TOWER) continue;
+      if (osm.h[slot] > 0.5) heights.push(osm.h[slot]);
+    }
+  }
+  if (heights.length < 40) return 1;
+  heights.sort((a, b) => a - b);
+  const p90 = heights[Math.floor(heights.length * 0.9)];
+  return Math.max(0.12, Math.min(2.2, p90 / SUBSTRATE_P90));
+}
 
 /** Metadata the extract owns outright; the substrate has no opinion on it. */
 const OSM_METADATA = [
@@ -60,11 +90,19 @@ export class CompositeWorld extends ProceduralWorld {
     const corner = Math.hypot(osm.width, osm.height) / 2;
     this.densityScale = Math.max(1, (corner + MAXD * 3) / BUILT_RADIUS);
 
+    // Take the skyline from the city that is actually there. The substrate's
+    // own profile is a generic downtown topping out near 65 m, and stamping
+    // that around every extract gives a low-rise city a horizon of towers it
+    // does not have. Not merely ugly: standing order 5 says generated
+    // geography must never present as measured fact, and an invented skyline
+    // over a real address is exactly that.
+    this.heightScale = heightScaleFor(osm);
+
     for (const key of OSM_METADATA) this[key] = osm[key];
     this.width = osm.width;
     this.height = osm.height;
     // Both layers can raise the skyline, and the DDA early-out needs the taller.
-    this.maxHeight = Math.max(osm.maxHeight, this.maxHeight);
+    this.maxHeight = Math.max(osm.maxHeight, this.maxHeight * this.heightScale);
     // The extract decides whether this city claims to be a real place; the
     // substrate around it is marked per cell, not by relabelling the world.
     this.synthetic = osm.synthetic;

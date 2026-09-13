@@ -26,6 +26,14 @@ export class ProceduralWorld extends ChunkedWorld {
     // 1 is the standalone city. A composite world widens it so the generated
     // surroundings still have buildings out to the horizon.
     this.densityScale = 1;
+    /**
+     * Multiplier on generated BUILDING heights. 1 is the standalone city's own
+     * skyline. A composite world sets it from the heights actually present in
+     * the extract it surrounds, so a low-rise city is not given a downtown it
+     * does not have. Trees and terrain are unaffected: this is about how tall
+     * the buildings are, not how tall the world is.
+     */
+    this.heightScale = 1;
     // A bound, not an observation: the tallest term below is 10 + 10 + 21.
     this.maxHeight = 42;
     this.name = 'Procedural City';
@@ -109,10 +117,10 @@ export class ProceduralWorld extends ChunkedWorld {
             type = T.TOWER;
             const lf = Math.max(0, 1 - dist / 320);
             // a skyline needs low-rise too, or every street is a slot canyon
-            h = rb < 0.46 ? 4 + rb2 * 6 : 10 + rb2 * 10 + lf * rc * 21;
+            h = (rb < 0.46 ? 4 + rb2 * 6 : 10 + rb2 * 10 + lf * rc * 21) * this.heightScale;
           }
         } else if (dist < 480) {
-          if (rb < 0.74) { type = T.HOUSE; h = 2.4 + rb2 * 2.2; }
+          if (rb < 0.74) { type = T.HOUSE; h = (2.4 + rb2 * 2.2) * this.heightScale; }
           else type = T.YARD;
         } else if (dist < 790) {
           if (rb < 0.35) type = T.FIELD;
