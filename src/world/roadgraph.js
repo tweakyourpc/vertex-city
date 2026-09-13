@@ -160,7 +160,20 @@ export function buildRoadGraph(roads, {
     const approaches = [...arms.values()];
     assignGroups(approaches);
     const names = [...new Set(approaches.map((a) => a.nameId).filter((n) => n >= 0))];
-    const j = { id: node.id, x: node.x, y: node.y, names, approaches, signal: node.signal };
+    // How far the intersection box reaches from the node: half the widest
+    // street meeting here. A crossing belongs outside that box, in line with
+    // the pavement it joins, and the box is set by the street being crossed
+    // rather than by the one you are standing on. Both the renderer that paints
+    // a crossing and the traffic that stops behind it read this, so they cannot
+    // disagree about where the junction ends.
+    let boxHalf = 0;
+    for (const edgeId of node.incident) {
+      const e = edges[edgeId];
+      const w = Number.isFinite(e?.width) ? e.width : 3.38;
+      boxHalf = Math.max(boxHalf, w / 2);
+    }
+    const j = { id: node.id, x: node.x, y: node.y, names, approaches,
+                signal: node.signal, boxHalf };
     if (names.length >= 2) junctions.push(j);
     if (node.signal && approaches.length >= 2) signalJunctions.push(j);
   }

@@ -1,5 +1,6 @@
 import { T, F, hash } from '../world/source.js';
-import { FLOOR_H, CROSS_SETBACK, CROSS_DEPTH, STOP_LINE_DEPTH, STOP_LINE_GAP, DRIVE_ON_RIGHT } from '../config.js';
+import { FLOOR_H, CROSS_DEPTH, STOP_LINE_DEPTH, STOP_LINE_GAP, DRIVE_ON_RIGHT,
+  crossingCentreFor } from '../config.js';
 
 /**
  * Vertex layout: position(3) normal(3) colour(3) uv(2) kind(1) seed(1)
@@ -581,9 +582,17 @@ export function buildDistrict(world, cam, radius = 145) {
         const jx=end?b[0]:a[0], jy=end?b[1]:a[1];
         const j=nearbyJunctions.find(n2=>Math.hypot(n2.x-jx,n2.y-jy)<2.5);
         if(!j) continue;
-        const back=width/2+CROSS_SETBACK;
+        // Outside the intersection box, in line with the pavement it joins.
+        // This used to be set back by the approach road's OWN half-width, which
+        // says nothing about how far the junction reaches: crossing a narrow
+        // street at a wide avenue put the bars inside the box, stranded in the
+        // middle of the intersection instead of at the kerb.
+        const back=crossingCentreFor(j.boxHalf ?? width/2);
         const d=end?len-back:back;
-        if(d<lo||d>hi) continue;
+        // A short segment cannot hold its crossing; clamping it to the visible
+        // span would slide the bars along the street. Drawing it slightly off
+        // the segment is correct, because the crossing belongs to the junction.
+        if(d<lo-back||d>hi+back) continue;
         const dirx=end?ux:-ux, diry=end?uy:-uy;
         crossing(mesh,a[0]+ux*d,a[1]+uy*d,ux,uy,width);
         // Phase group from the approach bearing, so crossing streets alternate;

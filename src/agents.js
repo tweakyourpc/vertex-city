@@ -590,9 +590,11 @@ export class Traffic {
       ? edge.width : (ROAD_WIDTH_CELLS[edge.cls] ?? 3.38);
     // `distance` is the car's CENTRE, so stopping the centre on the line put
     // half a car length of bonnet across the crossing. The bumper is what has
-    // to be behind the line, and the line itself comes from the same constants
-    // the renderer paints it with.
-    const stopBack = stopLineFor(lanes) + a.vehicle.length / 2;
+    // to be behind the line, and the line itself comes from the junction's own
+    // box size, which is what the renderer paints against.
+    const junction = graph.junctions?.find((j) => j.id === node.id);
+    const boxHalf = junction?.boxHalf ?? lanes / 2;
+    const stopBack = stopLineFor(boxHalf) + a.vehicle.length / 2;
     // Only brake for the light while there is still room to stop behind the
     // line. Past it the car is committed: braking there is what parked cars
     // across the crossing and left them in the box when the phase changed, and

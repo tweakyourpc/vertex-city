@@ -192,14 +192,22 @@ export const DRIVE_ON_RIGHT = true;
  * them. When each kept its own numbers, cars held their red with the front
  * half of the car across the crossing.
  */
-export const CROSS_SETBACK = 2.4;    // crossing centre, beyond the half-carriageway
+export const CROSS_GAP = 0.9;        // clear asphalt between box and crossing
 export const CROSS_DEPTH = 2.35;     // depth of the bars, along the road
 export const STOP_LINE_DEPTH = 0.45; // the solid transverse bar
 export const STOP_LINE_GAP = 0.35;   // clear asphalt between line and crossing
 
-/** Distance back from the node at which a stopping car's FRONT BUMPER belongs. */
-export function stopLineFor(carriageway) {
-  return carriageway / 2 + CROSS_SETBACK + CROSS_DEPTH / 2
+/** Distance from the node to the centre of a crossing on one approach. */
+export function crossingCentreFor(boxHalf) {
+  return boxHalf + CROSS_GAP + CROSS_DEPTH / 2;
+}
+
+/**
+ * Distance back from the node at which a stopping car's FRONT BUMPER belongs:
+ * behind the crossing, which is itself outside the intersection box.
+ */
+export function stopLineFor(boxHalf) {
+  return crossingCentreFor(boxHalf) + CROSS_DEPTH / 2
        + STOP_LINE_GAP + STOP_LINE_DEPTH;
 }
 
