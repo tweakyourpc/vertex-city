@@ -16,7 +16,7 @@ try {
   await page.waitForFunction(()=>window.state?.phase==='ready' && document.getElementById('loc').textContent.length>0);
   assert.equal(await page.evaluate(()=>window.presentation.appearance),'readable');
   assert.ok(await page.evaluate(()=>window.readable.district.vertices.length>0));
-  await page.screenshot({path:'/tmp/ascii-city-v3-day.png'});
+  await page.screenshot({path:'/tmp/vertex-city-day.png'});
   console.log('Day view:',await page.locator('#loc').textContent());
   const before=await page.evaluate(()=>({x:window.cam.x,y:window.cam.y}));
   await page.locator('#c').focus();await page.keyboard.down('w');
@@ -29,7 +29,7 @@ try {
   await page.selectOption('#appearance','readable');
   await page.selectOption('#lighting','night');
   await page.locator('#close-panel').click();
-  await page.waitForTimeout(300);await page.screenshot({path:'/tmp/ascii-city-v3-night.png'});
+  await page.waitForTimeout(300);await page.screenshot({path:'/tmp/vertex-city-night.png'});
   await page.locator('#open-layers').click();
   await page.locator('[data-layer="quakes"]').check();
   assert.equal(await page.locator('#layer-count').textContent(),'1');
@@ -46,7 +46,7 @@ try {
   assert.match(await page.locator('#attrib').textContent(),/Fictional/);
   await page.locator('#open-view').click();await page.selectOption('#lighting','day');
   await page.locator('#close-panel').click();
-  await page.waitForTimeout(300);await page.screenshot({path:'/tmp/ascii-city-v3-demo.png'});
+  await page.waitForTimeout(300);await page.screenshot({path:'/tmp/vertex-city-demo.png'});
   await page.locator('#flight-toggle').click();
   await page.waitForFunction(()=>window.cam.movement==='fly');
   await page.locator('#flight-toggle').click();
@@ -54,9 +54,9 @@ try {
   await page.setViewportSize({width:390,height:844});
   await page.waitForTimeout(300);
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
-  await page.screenshot({path:'/tmp/ascii-city-v3-mobile.png'});
+  await page.screenshot({path:'/tmp/vertex-city-mobile.png'});
   const identity=await(await page.request.get(base+'/whoami')).json();
-  assert.equal(identity.service,'ascii-city-v3');
+  assert.equal(identity.service,'vertex-city');
   assert.equal((await page.request.get(base+'/package.json')).status(),404);
   assert.deepEqual(errors,[]);
   console.log('Passed: rendered cityscape, movement, ASCII switch, lighting, layers, input isolation, demo provenance, flight, mobile layout, and server identity.');

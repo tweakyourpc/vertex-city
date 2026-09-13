@@ -1,7 +1,7 @@
-import deployment from '../ascii-city.config.js';
+import deployment from '../vertex-city.config.js';
 
 /** Where a runtime Worker choice is remembered, per browser. */
-const OVERRIDE_KEY = 'ascii-city:worker-url:1';
+const OVERRIDE_KEY = 'vertex-city:worker-url:1';
 
 /** Normalize an optional HTTP(S) service base without accepting other schemes. */
 export function serviceBase(value) {
@@ -18,7 +18,7 @@ export function serviceBase(value) {
  *
  * `?worker=<url>` selects one and remembers it for this browser; `?worker=`
  * with an empty value forgets it. This is how local development and a fork
- * that has not edited `ascii-city.config.js` reach live aircraft and camera
+ * that has not edited `vertex-city.config.js` reach live aircraft and camera
  * data. Nothing is inherited by a clone: the value lives only in the browser
  * that set it, never in the repository.
  */

@@ -10,7 +10,7 @@ export const RADIO_RADIUS_KM = 150;
 const RADIO_LIMIT = 12;
 const DIRECTORY_LIMIT = 300;
 const DIRECTORY_HOST = 'https://de1.api.radio-browser.info';
-const SELECTION_PREFIX = 'ascii-city:radio-selection:1:';
+const SELECTION_PREFIX = 'vertex-city:radio-selection:1:';
 
 export function distanceKm(lat1, lon1, lat2, lon2) {
   const rad = Math.PI / 180;

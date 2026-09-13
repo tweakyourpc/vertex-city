@@ -1,6 +1,6 @@
-# ASCII City v3, Field Study
+# Vertex City v3, Field Study
 
-![ASCII City v3: a wireframe city at night, cyan towers over an amber street grid](docs/hero.png)
+![Vertex City: a wireframe city at night, cyan towers over an amber street grid](docs/hero.png)
 
 **A real city, drawn as light.**
 
@@ -63,7 +63,7 @@ and repository.
 
 ## Run locally
 
-ASCII City uses conventional Node tooling and binds to the LAN. With no `PORT`
+Vertex City uses conventional Node tooling and binds to the LAN. With no `PORT`
 set, the operating system selects an available port and the server prints it:
 
 ```bash
@@ -83,7 +83,7 @@ work without a Worker. Live aircraft and live ALPR cameras need one, because
 neither upstream sends CORS headers a browser will accept.
 
 To enable those features, deploy the included Worker from your own Cloudflare
-account and put its URL in `ascii-city.config.js`:
+account and put its URL in `vertex-city.config.js`:
 
 ```bash
 npm run worker:deploy
@@ -166,7 +166,7 @@ Auto-tour, cyclists, and the remaining street-life improvements are later milest
 
 The HUD is docked on the left by default so it does not cover the city. Use
 `A−` / `A+` to resize it independently of browser zoom, `FLOAT` to overlay it,
-or drag the `ASCII CITY` handle to place it anywhere. `QUALITY` cycles
+or drag the `VERTEX CITY` handle to place it anywhere. `QUALITY` cycles
 all rendering modes between adaptive and fixed scales. The layout is saved
 locally in the browser.
 

@@ -5,7 +5,7 @@ import { formatCityTime } from './clock.js';
 
 const escapeHtml = (s) => String(s)
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-const HUD_LAYOUT_KEY = 'ascii-city:hud-layout:3';
+const HUD_LAYOUT_KEY = 'vertex-city:hud-layout:3';
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
 /** Build the shareable hash. LIVE views omit time; SIM views carry an instant. */

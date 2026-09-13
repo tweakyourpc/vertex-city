@@ -1,5 +1,5 @@
 /**
- * Render one frame of ASCII City v2 to stdout as text, with no browser.
+ * Render one frame of Vertex City v2 to stdout as text, with no browser.
  *
  * v2 draws buildings (height-field raycaster) with the clean street network
  * overlaid as projected polylines, so this tool exercises the full pipeline:

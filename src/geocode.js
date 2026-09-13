@@ -19,7 +19,7 @@ import { boxAround, DEFAULT_SPAN_DEG } from './world/overpass.js';
  */
 
 const CACHE = new Map();                 // query -> result | null
-const LS_PREFIX = 'ascii-city:geo:1:';
+const LS_PREFIX = 'vertex-city:geo:1:';
 const TTL_MS = 30 * 24 * 3600 * 1000;
 const TIMEOUT_MS = 8000;
 
@@ -28,7 +28,7 @@ let coolUntil = 0;
 let inFlight = null;
 
 /** Identify the app, as Nominatim's usage policy asks. Browsers send Referer. */
-const UA = 'ascii-city/1.1 (+https://github.com/tweakyourpc/ascii-city)';
+const UA = 'vertex-city/3.0 (+https://github.com/tweakyourpc/vertex-city)';
 
 const norm = (q) => String(q).trim().toLowerCase().replace(/\s+/g, ' ');
 

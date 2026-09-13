@@ -4,7 +4,7 @@ import { buildRoadGraph } from './roadgraph.js';
 import { buildSemanticIndex } from '../spatial.js';
 
 /**
- * ASCII City v2: the street network, and nothing else.
+ * Vertex City v2: the street network, and nothing else.
  *
  * v1 rasterized buildings into a height field and raycast it. v2 throws the
  * height field away: the world is flat (h = 0 everywhere) and the renderer

@@ -14,7 +14,7 @@ const CACHE = new Map();              // key -> { text } | null
 // Version 3 invalidates the old bare-name search cache. Those searches had no
 // geographic constraint, so a Sarasota building could retain a Miami article
 // for 30 days. Only explicit OSM wikipedia/wikidata links are cached now.
-const LS_PREFIX = 'ascii-city:wiki:3:';
+const LS_PREFIX = 'vertex-city:wiki:3:';
 const TTL_MS = 30 * 24 * 3600 * 1000;
 const TIMEOUT_MS = 6000;
 const MAX_CHARS = 600;

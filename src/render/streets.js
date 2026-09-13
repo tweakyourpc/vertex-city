@@ -3,7 +3,7 @@ import { fogOf } from './materials.js';
 import { cameraEnvelope, semanticCandidates } from '../spatial.js';
 
 /**
- * The street renderer for ASCII City v2.
+ * The street renderer for Vertex City v2.
  *
  * v1 painted roads as a textured floor of `=`/`-` glyphs, which reads as noise
  * rather than lines. v2 draws the road network as projected polylines: each OSM

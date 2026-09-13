@@ -1,4 +1,4 @@
-# ASCII City, Standing Orders and Agent Handoff
+# Vertex City, Standing Orders and Agent Handoff
 
 > Read this file completely before modifying code. Update it before ending a
 > substantial session. It is the repository-level operating memory for Codex,
@@ -7,10 +7,10 @@
 ## THIS IS THE ACTIVE PROJECT
 
 **Path: `/home/chris/CODING/EXPERIMENT/new_ascii_city/v3`**
-**Port: 8792** (`portbroker get --name ascii-city-v3`), start with `npm start`.
+**Port: 8792** (`portbroker get --name vertex-city`), start with `npm start`.
 
-As of 2026-09-12 this tree, `ascii-city-v3`, version `3.0.0-preview`, is the
-trunk. Any agent asked to work on "ASCII City" works here.
+As of 2026-09-12 this tree, `vertex-city`, version `3.0.0-preview`, is the
+trunk. Any agent asked to work on "Vertex City" works here.
 
 Superseded, do not edit:
 
@@ -27,7 +27,7 @@ re-read this section.
 
 ## Project
 
-ASCII City is a lightweight browser-native ASCII world engine. It combines
+Vertex City is a lightweight browser-native ASCII world engine. It combines
 real geographic and observational data with deterministic local calculation
 and explicitly marked procedural interpretation. The renderer must interpret
 irregular real-world geometry rather than replacing it with a renderer-shaped
@@ -45,7 +45,7 @@ Repository: `https://github.com/tweakyourpc/ascii-city-3` (private)
    existing ASCII renderer. Prefer additive, measured changes.
 4. Keep browser-native and portable. Never add credentials, the port broker,
    or local-only tooling to public source, docs, scripts, comments, or tests.
-   The public deployment Worker may be named in `ascii-city.config.js`, but
+   The public deployment Worker may be named in `vertex-city.config.js`, but
    only behind the official-hostname gate, so a clone or fork inherits no
    service and sends no traffic through the original author's account. That
    URL is not a secret: publishing the Pages site ships it in the bundle
@@ -422,7 +422,7 @@ shadowed the imported helper, so the call threw a `ReferenceError` on every
 invocation once a single camera had loaded. `statusOf` now receives the live
 camera, so "nearest" means nearest to the viewer rather than to world centre.
 
-Added the official-hostname Worker gate in `ascii-city.config.js`.
+Added the official-hostname Worker gate in `vertex-city.config.js`.
 
 Completed (Claude Code): added an early guard so a world without real
 coordinates reports `N/A` instead of asking Nominatim about an undefined
@@ -528,7 +528,7 @@ left in the code.
   cache made it persist for 30 days.
 - Do not shadow the imported `distanceKm` inside `FlockLayer.nearest()`; the
   block-scoped redeclaration threw on every call with a camera loaded.
-- Do not remove the official-hostname gate in `ascii-city.config.js`. A clone
+- Do not remove the official-hostname gate in `vertex-city.config.js`. A clone
   or fork must still inherit no service.
 - Do not restore hard-coded original Worker traffic.
 - Do not make live API calls required by automated tests.

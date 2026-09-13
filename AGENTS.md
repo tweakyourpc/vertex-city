@@ -1,10 +1,10 @@
-# ASCII City v3, active project
+# Vertex City v3, active project
 
-This is the ASCII City trunk as of 2026-09-12. Work here.
+This is the Vertex City trunk as of 2026-09-12. Work here.
 
 - **Path:** `/home/chris/CODING/EXPERIMENT/new_ascii_city/v3`
-- **Package:** `ascii-city-v3`, version `3.0.0-preview`
-- **Run:** `npm start` (serves on port 8792 via `portbroker get --name ascii-city-v3`)
+- **Package:** `vertex-city`, version `3.0.0-preview`
+- **Run:** `npm start` (serves on port 8792 via `portbroker get --name vertex-city`)
 - **Check:** `npm run check` (lint + tests), `npm run benchmark` for render timing
 
 **Read `HANDOFF.md` in full before changing code.** It holds the standing

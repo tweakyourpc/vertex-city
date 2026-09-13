@@ -57,15 +57,15 @@ const COOL_RATE_MS = 60 * 1000;
 const COOL_EMPTY_MS = 6 * 60 * 60 * 1000;
 
 /** Success, by contrast, is worth remembering across a reload. */
-const GOOD_KEY = 'ascii-city:overpass-good:1';
+const GOOD_KEY = 'vertex-city:overpass-good:1';
 const GOOD_TTL_MS = 6 * 60 * 60 * 1000;
 
 // Some instances rate-limit requests that arrive without a meaningful
 // User-Agent. Browsers set their own and silently ignore this header; it is
 // here so the engine is a good citizen when driven from Node, in tests and
 // from tools/.
-const UA = 'ascii-city/0.3 (+https://github.com/tweakyourpc/ascii-city)';
-const CACHE_PREFIX = 'ascii-city:osm:';
+const UA = 'vertex-city/3.0 (+https://github.com/tweakyourpc/vertex-city)';
+const CACHE_PREFIX = 'vertex-city:osm:';
 const CACHE_VERSION = 2;
 
 /** Largest bbox we will ask for, in square degrees. About 2km x 2km at 40N. */

@@ -3,7 +3,7 @@ import { createServer } from 'node:http';
 import { extname, join, normalize } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-const service = 'ascii-city-v3';
+const service = 'vertex-city';
 const version = '3.0.0-preview';
 const host = process.env.HOST || '0.0.0.0';
 const requestedPort = process.env.PORT ? Number(process.env.PORT) : 0;
@@ -22,7 +22,7 @@ export function createRequestHandler({ root = process.cwd(), identity }) {
       res.end(JSON.stringify(identity()));
       return;
     }
-    if (!['/', '/index.html', '/styles.css', '/ascii-city.config.js'].includes(url.pathname) && !/^\/src\/[a-zA-Z0-9_/-]+\.js$/.test(url.pathname)) {
+    if (!['/', '/index.html', '/styles.css', '/vertex-city.config.js'].includes(url.pathname) && !/^\/src\/[a-zA-Z0-9_/-]+\.js$/.test(url.pathname)) {
       res.statusCode = 404; res.end('Not found'); return;
     }
     const rel = normalize(decodeURIComponent(url.pathname)).replace(/^(\.\.(\/|\\|$))+/, '');
@@ -40,13 +40,13 @@ export function createRequestHandler({ root = process.cwd(), identity }) {
 }
 
 if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) {
-  if (!requestedPort) throw new Error('Set PORT using portbroker get or alloc --name ascii-city-v3');
+  if (!requestedPort) throw new Error('Set PORT using portbroker get or alloc --name vertex-city');
   const server = createServer(createRequestHandler({
     identity: () => ({ service, version, pid: process.pid, startedAt, host, port }),
   }));
   server.listen(requestedPort, host, () => {
     const address = server.address();
     port = typeof address === 'object' && address ? address.port : requestedPort;
-    console.log(`ASCII City listening on http://${host}:${port}`);
+    console.log(`Vertex City listening on http://${host}:${port}`);
   });
 }
