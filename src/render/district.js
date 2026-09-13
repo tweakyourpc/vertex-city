@@ -15,6 +15,25 @@ import { FLOOR_H, CROSS_SETBACK, CROSS_DEPTH, STOP_LINE_DEPTH, STOP_LINE_GAP, DR
 export const STRIDE = 17;
 const PALETTE = [[.83,.76,.64],[.73,.48,.35],[.91,.86,.73],[.57,.66,.67],[.77,.68,.56],[.89,.80,.66]];
 const CORNER = [[0,0],[1,0],[1,1],[0,1]];
+
+/**
+ * Road surface and the paint on it, in cells.
+ *
+ * Paint sits ON the asphalt. The crossing bars and stop line were at 0.066 and
+ * 0.067 while the road slab spans 0.056 to 0.070, which buried them four
+ * millimetres inside it: two surfaces at effectively the same depth, so which
+ * one won flipped per pixel and per camera position and a crossing tore itself
+ * into shimmering fans that swam as you walked. The lane dashes, which were
+ * already above the slab, never did this.
+ *
+ * Crossings sit above the dashes as well, because near a junction the two can
+ * overlap and coplanar paint fights just as badly as paint in tarmac.
+ */
+const ROAD_Z = 0.056;
+const ROAD_THICK = 0.014;
+const ROAD_TOP = ROAD_Z + ROAD_THICK;
+const DASH_Z = ROAD_TOP + 0.004;
+const CROSSING_Z = ROAD_TOP + 0.008;
 /**
  * Provenance rides in the `kind` attribute's 8s place rather than in a new
  * vertex attribute: generated geometry is its material id plus SIM, and the
@@ -120,10 +139,10 @@ function crossing(mesh,px,py,ux,uy,width) {
     const back=DEPTH/2+STOP_LINE_GAP+STOP_LINE_DEPTH/2;
     const bx=px-ux*back, by=py-uy*back, d=STOP_LINE_DEPTH/2;
     mesh.quad([
-      [bx+nx*-half-ux*d, by+ny*-half-uy*d, .067],
-      [bx+nx* half-ux*d, by+ny* half-uy*d, .067],
-      [bx+nx* half+ux*d, by+ny* half+uy*d, .067],
-      [bx+nx*-half+ux*d, by+ny*-half+uy*d, .067],
+      [bx+nx*-half-ux*d, by+ny*-half-uy*d, CROSSING_Z],
+      [bx+nx* half-ux*d, by+ny* half-uy*d, CROSSING_Z],
+      [bx+nx* half+ux*d, by+ny* half+uy*d, CROSSING_Z],
+      [bx+nx*-half+ux*d, by+ny*-half+uy*d, CROSSING_Z],
     ],[0,0,1],[.93,.93,.90]);
   }
   // Step out from the centreline both ways so the pattern stays centred on the
@@ -133,10 +152,10 @@ function crossing(mesh,px,py,ux,uy,width) {
     if(b-a<0.12) continue;
     const c=(a+b)/2, w=b-a;
     mesh.quad([
-      [px+nx*(c-w/2)-ux*DEPTH/2, py+ny*(c-w/2)-uy*DEPTH/2, .066],
-      [px+nx*(c+w/2)-ux*DEPTH/2, py+ny*(c+w/2)-uy*DEPTH/2, .066],
-      [px+nx*(c+w/2)+ux*DEPTH/2, py+ny*(c+w/2)+uy*DEPTH/2, .066],
-      [px+nx*(c-w/2)+ux*DEPTH/2, py+ny*(c-w/2)+uy*DEPTH/2, .066],
+      [px+nx*(c-w/2)-ux*DEPTH/2, py+ny*(c-w/2)-uy*DEPTH/2, CROSSING_Z],
+      [px+nx*(c+w/2)-ux*DEPTH/2, py+ny*(c+w/2)-uy*DEPTH/2, CROSSING_Z],
+      [px+nx*(c+w/2)+ux*DEPTH/2, py+ny*(c+w/2)+uy*DEPTH/2, CROSSING_Z],
+      [px+nx*(c-w/2)+ux*DEPTH/2, py+ny*(c-w/2)+uy*DEPTH/2, CROSSING_Z],
     ],[0,0,1],[.88,.88,.84]);
   }
 }
@@ -518,7 +537,7 @@ export function buildDistrict(world, cam, radius = 145) {
       const ux=dx/len,uy=dy/len,angle=Math.atan2(dy,dx),mx=a[0]+ux*(lo+hi)/2,my=a[1]+uy*(lo+hi)/2;
       // Sidewalk and asphalt have distinct, calm materials and real thickness.
       mesh.box(mx,my,.014,hi-lo,width+2.5,.04,angle,[.80,.79,.71]);
-      mesh.box(mx,my,.056,hi-lo,width,.014,angle,foot?[.77,.74,.65]:[.32,.37,.40]);
+      mesh.box(mx,my,ROAD_Z,hi-lo,width,ROAD_THICK,angle,foot?[.77,.74,.65]:[.32,.37,.40]);
       // Crossings at each end of a segment that meets a junction, set back from
       // the centre so they sit where a stop line would, not in the middle of
       // the box. Both ends are checked because a segment can arrive at one
@@ -564,7 +583,7 @@ export function buildDistrict(world, cam, radius = 145) {
       }
       if(!foot) for(let d=Math.ceil(lo/4)*4;d<hi;d+=4) {
         if(nearbyJunctions.some(j=>Math.hypot(j.x-(a[0]+ux*d),j.y-(a[1]+uy*d))<width+1)) continue;
-        mesh.box(a[0]+ux*d,a[1]+uy*d,.073,1.8,.065,.003,angle,[.92,.86,.61]);
+        mesh.box(a[0]+ux*d,a[1]+uy*d,DASH_Z,1.8,.065,.003,angle,[.92,.86,.61]);
       }
       // Step on a grid measured along the road itself, and alternate which
       // kerb each piece lands on, the way street furniture is actually spaced.

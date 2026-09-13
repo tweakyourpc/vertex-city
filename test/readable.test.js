@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { Mesh, buildDistrict, buildMovers, STRIDE } from '../src/render/district.js';
 import { Lighting } from '../src/render/materials.js';
 import { T } from '../src/world/source.js';
+import { ProceduralWorld } from '../src/world/procedural.js';
 
 function fixture() {
   // Explicit test geometry: one rectangular mapped footprint on empty ground.
@@ -72,4 +73,60 @@ test('rendered movers use actual simulation positions and quiet mode emits none'
   assert.ok(data.length>0);
   for(let i=0;i<data.length;i+=STRIDE){assert.ok(Math.abs(data[i]-5)<2);assert.ok(Math.abs(data[i+1]-7)<1);}
   assert.equal(buildMovers({mode:0,agents:[car]}, {},0).vertices.length,0);
+});
+
+/**
+ * Road paint has to sit on the asphalt, not inside it.
+ *
+ * The crossing bars and stop line were at 0.066 and 0.067 while the road slab
+ * spans 0.056 to 0.070, so the paint was four millimetres underneath the
+ * surface it was painted on. Two coplanar-ish surfaces leave the depth test
+ * with nothing to separate them, and a crossing tore into shimmering fans that
+ * swam as the camera moved. This is an invariant about geometry, not a
+ * judgement about how it looks, so it is worth pinning.
+ */
+test('road markings sit above the road surface, never inside it', () => {
+  const world = new ProceduralWorld();
+  const data = buildDistrict(world, { x: 829, y: 1192 }, 90).vertices;
+
+  // Vertex layout: position 0-2, normal 3-5, colour 6-8, uv 9-10, kind 11,
+  // seed 12, corner 13-14, extent 15-16. Getting this wrong is how the first
+  // version of this test passed against the very bug it was written for: it
+  // read index 5 as the seed when index 5 is normal.z, so it selected only
+  // vertical faces and never saw a single piece of road paint.
+  const COLOUR = { z: 2, r: 6, g: 7, b: 8, nz: 5 };
+  const near = (v, t) => Math.abs(v - t) < 0.005;
+  const isColour = (i, c) =>
+    near(data[i+COLOUR.r], c[0]) && near(data[i+COLOUR.g], c[1]) && near(data[i+COLOUR.b], c[2]);
+
+  // The asphalt's own top, taken from the mesh rather than assumed.
+  let roadTop = 0;
+  for (let i = 0; i < data.length; i += STRIDE) {
+    if (isColour(i, [0.32, 0.37, 0.40])) roadTop = Math.max(roadTop, data[i+COLOUR.z]);
+  }
+  assert.ok(roadTop > 0, 'no road surface found to test against');
+
+  // Every painted marking, by its own colour, and only the faces that lie flat
+  // on the ground: a marking's vertical edges are not what z-fights.
+  const paints = {
+    'crossing bars': [0.88, 0.88, 0.84],
+    'stop line': [0.93, 0.93, 0.90],
+    'lane dashes': [0.92, 0.86, 0.61],
+  };
+  let checked = 0;
+  for (const [name, colour] of Object.entries(paints)) {
+    let lowest = Infinity;
+    for (let i = 0; i < data.length; i += STRIDE) {
+      if (!isColour(i, colour)) continue;
+      if (data[i+COLOUR.nz] < 0.9) continue;        // flat, facing up
+      if (data[i+COLOUR.z] > 0.5) continue;         // on the ground, not a roof
+      lowest = Math.min(lowest, data[i+COLOUR.z]);
+    }
+    if (lowest === Infinity) continue;              // none in this district
+    checked++;
+    assert.ok(lowest > roadTop,
+      `${name} at z=${lowest.toFixed(4)} is at or below the road surface at ` +
+      `z=${roadTop.toFixed(4)}, which is what makes paint z-fight with tarmac`);
+  }
+  assert.ok(checked >= 2, `only ${checked} kinds of marking found; the sweep is not covering them`);
 });
