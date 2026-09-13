@@ -1,6 +1,7 @@
 import { T, F, hash } from '../world/source.js';
 import { FLOOR_H, CROSS_DEPTH, STOP_LINE_DEPTH, STOP_LINE_GAP, DRIVE_ON_RIGHT,
   crossingCentreFor } from '../config.js';
+import { boxHalfAlong } from '../world/roadgraph.js';
 
 /**
  * Vertex layout: position(3) normal(3) colour(3) uv(2) kind(1) seed(1)
@@ -134,6 +135,32 @@ function tree(mesh,x,y,seed) {
  * `ux,uy` is the road's direction, `px,py` the point on the centreline where
  * the crossing sits, and `width` the carriageway it has to span.
  */
+/**
+ * Walk `want` cells along a polyline from vertex `k`, in direction `step`
+ * (-1 towards pts[0], +1 towards the end), following every bend.
+ *
+ * Returns the point reached and the unit direction of the segment it landed
+ * on, or null if the road ends first. Measuring a setback along the single
+ * segment touching a vertex cannot work on surveyed geometry, where a way may
+ * carry a vertex every few cells: the distance either overshot into the next
+ * block or, guarded against that, vanished entirely.
+ */
+function walkPolyline(pts,k,step,want) {
+  let left=want,i=k;
+  while(true) {
+    const nx=i+step;
+    if(nx<0||nx>=pts.length) return null;
+    const a=pts[i],b=pts[nx];
+    const dx=b[0]-a[0],dy=b[1]-a[1],len=Math.hypot(dx,dy);
+    if(len>1e-6) {
+      const ux=dx/len,uy=dy/len;
+      if(left<=len) return {x:a[0]+ux*left,y:a[1]+uy*left,ux,uy};
+      left-=len;
+    }
+    i=nx;
+  }
+}
+
 function crossing(mesh,px,py,ux,uy,width) {
   const nx=-uy, ny=ux;                     // across the road
   const BAR=0.62, GAP=0.46, DEPTH=CROSS_DEPTH;
@@ -514,6 +541,8 @@ export function buildDistrict(world, cam, radius = 145) {
   const mesh=new Mesh(), lights=new Mesh(), beacons=new Mesh(), walkers=[];
   const cx=Math.floor(cam.x/32)*32+16,cy=Math.floor(cam.y/32)*32+16;
   const nearbyJunctions=(world.junctions||[]).filter(j=>Math.hypot(j.x-cx,j.y-cy)<radius+15);
+  // Junction approaches whose crossing and signal are already in this mesh.
+  const drawnCrossings=new Set();
 
   // Road segments in range, gathered once. Trees are placed from the raster,
   // but a road is DRAWN wider than it is rasterised, so a cell the world calls
@@ -614,46 +643,39 @@ export function buildDistrict(world, cam, radius = 145) {
     if(['motorway','trunk','motorway_link','trunk_link'].includes(road.cls)) continue;
     const foot=['footway','path','pedestrian','steps','cycleway'].includes(road.cls);
     const width=road.width || 3.8;
-    // Distance travelled along the whole polyline, not along this segment. The
-    // cadence below restarted at every vertex, so each segment placed its own
-    // furniture near a shared corner and both sides of a bend got a set: the
-    // clustering at junctions was two rows meeting, not one row bunching.
-    let along0=0;
-    for(let i=1;i<road.pts.length;i++) {
-      const a=road.pts[i-1],b=road.pts[i],dx=b[0]-a[0],dy=b[1]-a[1],len=Math.hypot(dx,dy);
-      const base=along0; along0+=len;
-      if(len<.1) continue;
-      const t=Math.max(0,Math.min(1,((cx-a[0])*dx+(cy-a[1])*dy)/(len*len)));
-      if(Math.hypot(a[0]+dx*t-cx,a[1]+dy*t-cy)>radius) continue;
-      const lo=Math.max(0,t*len-radius),hi=Math.min(len,t*len+radius);
-      const ux=dx/len,uy=dy/len,angle=Math.atan2(dy,dx),mx=a[0]+ux*(lo+hi)/2,my=a[1]+uy*(lo+hi)/2;
-      // Sidewalk and asphalt have distinct, calm materials and real thickness.
-      mesh.box(mx,my,.014,hi-lo,width+2.5,.04,angle,[.80,.79,.71]);
-      mesh.box(mx,my,ROAD_Z,hi-lo,width,ROAD_THICK,angle,foot?[.77,.74,.65]:[.32,.37,.40]);
-      // Crossings at each end of a segment that meets a junction, set back from
-      // the centre so they sit where a stop line would, not in the middle of
-      // the box. Both ends are checked because a segment can arrive at one
-      // junction and leave from another.
-      if(!foot) for(const end of [0,1]) {
-        const jx=end?b[0]:a[0], jy=end?b[1]:a[1];
-        const j=nearbyJunctions.find(n2=>Math.hypot(n2.x-jx,n2.y-jy)<2.5);
-        if(!j) continue;
-        // Outside the intersection box, in line with the pavement it joins.
-        // This used to be set back by the approach road's OWN half-width, which
-        // says nothing about how far the junction reaches: crossing a narrow
-        // street at a wide avenue put the bars inside the box, stranded in the
-        // middle of the intersection instead of at the kerb.
-        const back=crossingCentreFor(j.boxHalf ?? width/2);
-        const d=end?len-back:back;
-        // A short segment cannot hold its crossing; clamping it to the visible
-        // span would slide the bars along the street. Drawing it slightly off
-        // the segment is correct, because the crossing belongs to the junction.
-        if(d<lo-back||d>hi+back) continue;
-        const dirx=end?ux:-ux, diry=end?uy:-uy;
-        crossing(mesh,a[0]+ux*d,a[1]+uy*d,ux,uy,width);
-        // Phase group from the approach bearing, so crossing streets alternate;
-        // offset from the junction's own position, so the city does not switch
-        // in unison. Both are deterministic, which keeps the mesh stable.
+    // Crossings belong to the junction, not to a segment of road, so they are
+    // placed by walking the POLYLINE out from each junction vertex rather than
+    // measured from one segment's end. A surveyed way carries a vertex every
+    // few cells for kerb geometry and tunnel portals; measuring per segment
+    // meant every one of those stubs near an intersection painted its own set
+    // of bars, which is what buried Park Avenue under crosswalks.
+    if(!foot) for(let k=0;k<road.pts.length;k++) {
+      const [vx,vy]=road.pts[k];
+      const j=nearbyJunctions.find(n2=>Math.hypot(n2.x-vx,n2.y-vy)<2.5);
+      if(!j||Math.hypot(vx-cx,vy-cy)>radius+CROSS_DEPTH) continue;
+      // Each way of leaving the junction, walked along this road's own geometry.
+      for(const step of [-1,1]) {
+        const at=walkPolyline(road.pts,k,step,1e-3);
+        if(!at) continue;
+        // The box is measured ALONG this approach. Setting back by the widest
+        // street at the node regardless of bearing pushed an avenue's own
+        // crossings half an avenue up the block.
+        const back=crossingCentreFor(boxHalfAlong(j,at.ux,at.uy)||width/2);
+        // One crossing per junction approach, drawn once. A junction vertex is
+        // shared by the segment arriving and the one leaving, and by every road
+        // through it; without this each of them painted the same bars again.
+        const side=(Math.round(Math.atan2(at.uy,at.ux)/(Math.PI/8))+16)%16;
+        const stamp=j.id*16+side;
+        if(drawnCrossings.has(stamp)) continue;
+        const p=walkPolyline(road.pts,k,step,back);
+        // The road ends before the crossing would: a stub, not an approach.
+        if(!p) continue;
+        drawnCrossings.add(stamp);
+        // The direction a driver on this approach is travelling: into the
+        // junction, against the walk. The stop line is painted behind the
+        // crossing along it, so the sign has to be the driver's, not the walk's.
+        const dirx=-p.ux, diry=-p.uy;
+        crossing(mesh,p.x,p.y,dirx,diry,width);
         // Only where the simulation actually signals. A head at a junction the
         // cars treat as uncontrolled is a light nobody obeys.
         if(!j.signal) continue;
@@ -670,8 +692,8 @@ export function buildDistrict(world, cam, radius = 145) {
         // like one, which is why traffic ignored the colour.
         let group=0,bestDot=-2;
         for(const ap of j.approaches||[]) {
-          const d=(-dirx)*ap.dx+(-diry)*ap.dy;
-          if(d>bestDot){bestDot=d;group=ap.group|0;}
+          const dot=(-dirx)*ap.dx+(-diry)*ap.dy;
+          if(dot>bestDot){bestDot=dot;group=ap.group|0;}
         }
         const offset=(((j.id*0.17)%32)+32)%32;
         // The head goes on the far kerb, past the junction, so a driver at the
@@ -681,10 +703,27 @@ export function buildDistrict(world, cam, radius = 145) {
         signalMast(mesh,beacons,fx,fy,dirx,diry,width,group,offset,
           jd<46?crossStreetName(world,nearRoads,j,dirx,diry):'');
       }
+    }
+    // Distance travelled along the whole polyline, not along this segment. The
+    // cadence below restarted at every vertex, so each segment placed its own
+    // furniture near a shared corner and both sides of a bend got a set: the
+    // clustering at junctions was two rows meeting, not one row bunching.
+    let along0=0;
+    for(let i=1;i<road.pts.length;i++) {
+      const a=road.pts[i-1],b=road.pts[i],dx=b[0]-a[0],dy=b[1]-a[1],len=Math.hypot(dx,dy);
+      const base=along0; along0+=len;
+      if(len<.1) continue;
+      const t=Math.max(0,Math.min(1,((cx-a[0])*dx+(cy-a[1])*dy)/(len*len)));
+      if(Math.hypot(a[0]+dx*t-cx,a[1]+dy*t-cy)>radius) continue;
+      const lo=Math.max(0,t*len-radius),hi=Math.min(len,t*len+radius);
+      const ux=dx/len,uy=dy/len,angle=Math.atan2(dy,dx),mx=a[0]+ux*(lo+hi)/2,my=a[1]+uy*(lo+hi)/2;
+      // Sidewalk and asphalt have distinct, calm materials and real thickness.
+      mesh.box(mx,my,.014,hi-lo,width+2.5,.04,angle,[.80,.79,.71]);
+      mesh.box(mx,my,ROAD_Z,hi-lo,width,ROAD_THICK,angle,foot?[.77,.74,.65]:[.32,.37,.40]);
       if(!foot) {
         // Markings stop at a junction box and resume beyond it.
         const skip=(d)=>nearbyJunctions.some(j=>{
-          const reach=(j.boxHalf??width/2)+CROSS_DEPTH+STOP_LINE_GAP+1.2;
+          const reach=(boxHalfAlong(j,ux,uy)||width/2)+CROSS_DEPTH+STOP_LINE_GAP+1.2;
           return Math.hypot(j.x-(a[0]+ux*d), j.y-(a[1]+uy*d))<reach;
         });
         laneMarkings(mesh,a,ux,uy,lo,hi,width,road,skip);

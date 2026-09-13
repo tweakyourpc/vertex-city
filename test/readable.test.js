@@ -4,6 +4,7 @@ import { Mesh, buildDistrict, buildMovers, triangulate, laneMarkings, STRIDE } f
 import { Lighting } from '../src/render/materials.js';
 import { T } from '../src/world/source.js';
 import { ProceduralWorld } from '../src/world/procedural.js';
+import { buildRoadGraph } from '../src/world/roadgraph.js';
 
 function fixture() {
   // Explicit test geometry: one rectangular mapped footprint on empty ground.
@@ -253,4 +254,107 @@ test('lane markings read oneway and lanes from the map', () => {
   const primary = paint({}, 'primary');
   assert.ok(primary.yellow > twoWay.yellow,
     'a solid double centre line uses more paint than a dashed single one');
+});
+
+/* ------------------------ crossings at junctions ------------------------- */
+
+// Park Avenue, structurally: a wide avenue with cross streets every 30 cells,
+// a vertex every 3 cells the way surveyed geometry actually comes, and the
+// separately named tunnel and service ways that lie along the same nodes.
+function avenueGrid({ vertexStep = 3, redundantWays = true } = {}) {
+  const AV_W = 13.5, ST_W = 4.2;
+  let next = 1;
+  const ids = new Map();
+  const nid = (x, y) => {
+    const k = `${x},${y}`;
+    if (!ids.has(k)) ids.set(k, next++);
+    return ids.get(k);
+  };
+  const dense = (keep) => {
+    const out = [];
+    for (let v = 0; v <= 180; v += vertexStep) out.push(v);
+    for (const v of keep) if (!out.includes(v)) out.push(v);
+    return [...new Set(out)].sort((a, b) => a - b);
+  };
+  const XS = [0, 90, 180], YS = [0, 30, 60, 90, 120, 150, 180];
+  const roads = [];
+  for (const [i, x] of XS.entries()) {
+    const ys = dense(YS);
+    const pts = ys.map((y) => [x, y]);
+    const nodeIds = ys.map((y) => nid(x, y));
+    roads.push({ cls: 'primary', width: AV_W, nameId: 100 + i, tags: {}, pts, nodeIds });
+    if (redundantWays && i === 1) {
+      roads.push({ cls: 'secondary', width: AV_W * 0.6, nameId: 300, tags: {},
+        pts: pts.map((p) => [...p]), nodeIds: [...nodeIds] });
+      roads.push({ cls: 'service', width: 3, nameId: 301, tags: {},
+        pts: pts.map((p) => [...p]), nodeIds: [...nodeIds] });
+    }
+  }
+  for (const [i, y] of YS.entries()) {
+    const xs = dense(XS);
+    roads.push({ cls: 'residential', width: ST_W, nameId: 200 + i, tags: {},
+      pts: xs.map((x) => [x, y]), nodeIds: xs.map((x) => nid(x, y)) });
+  }
+  const graph = buildRoadGraph(roads, {});
+  return {
+    world: {
+      buildings: [], roads, junctions: graph.junctions,
+      h: [0], type: [T.VOID], pal: [0], bid: [0], flags: [0], sample() { return 0; },
+    },
+    junctions: graph.junctions, AV_W,
+  };
+}
+
+// Crossings and stop lines are the only geometry on this plane; see CROSSING_Z.
+const CROSSING_PLANE = 0.078;
+function crossingQuads(vertices) {
+  const out = [];
+  for (let i = 0; i < vertices.length; i += STRIDE * 3) {
+    const tri = [0, 1, 2].map((t) => [
+      vertices[i + t * STRIDE], vertices[i + t * STRIDE + 1], vertices[i + t * STRIDE + 2],
+    ]);
+    if (tri.every((p) => Math.abs(p[2] - CROSSING_PLANE) < 1e-4)) out.push(tri);
+  }
+  return out;
+}
+
+test('crossings stay at the junctions and do not repeat down the street', () => {
+  const { world, junctions, AV_W } = avenueGrid();
+  const quads = crossingQuads(buildDistrict(world, { x: 90, y: 90 }, 145).vertices);
+  assert.ok(quads.length > 0, 'no crossings were drawn at all');
+
+  // Nothing is painted twice: a junction is shared by the segment arriving and
+  // the one leaving, and by every way through it.
+  const keys = new Set(quads.map((t) => t.map((p) => p.map((n) => n.toFixed(3)).join()).join('|')));
+  assert.equal(keys.size, quads.length, 'the same crossing was painted more than once');
+
+  // A box, a crossing and a stop line reach ~11 cells from the widest corner
+  // here. Beyond 14 is paint out in the middle of a block.
+  for (const tri of quads) {
+    const [x, y] = [0, 1].map((k) => (tri[0][k] + tri[1][k] + tri[2][k]) / 3);
+    const near = Math.min(...junctions.map((j) => Math.hypot(j.x - x, j.y - y)));
+    assert.ok(near <= 14, `crossing paint ${near.toFixed(1)} cells from any junction`);
+  }
+
+  // Park Avenue runs 180 cells through 7 junctions. Each junction marks two
+  // approaches, ~6 cells of paint apiece, so well under a third of its length
+  // is painted. At the regression it was 179 of 180.
+  const onAvenue = new Set();
+  for (const tri of quads) {
+    const x = (tri[0][0] + tri[1][0] + tri[2][0]) / 3;
+    const y = (tri[0][1] + tri[1][1] + tri[2][1]) / 3;
+    if (Math.abs(x - 90) < AV_W / 2) onAvenue.add(Math.round(y));
+  }
+  assert.ok(onAvenue.size < 60, `${onAvenue.size} of 180 cells of the avenue are painted`);
+});
+
+test('crossings do not depend on how finely a street is drawn or renamed', () => {
+  // The same city described three ways: a vertex every 3 cells, a vertex only
+  // at each junction, and with the tunnel and service ways removed. The paint
+  // is a property of the junctions, so all three must agree exactly.
+  const shape = (opts) => crossingQuads(buildDistrict(avenueGrid(opts).world, { x: 90, y: 90 }, 145).vertices)
+    .map((t) => t.map((p) => p.map((n) => n.toFixed(3)).join()).join('|')).sort().join('\n');
+  const dense = shape({});
+  assert.equal(shape({ vertexStep: 30 }), dense, 'vertex spacing changed the crossings');
+  assert.equal(shape({ redundantWays: false }), dense, 'a co-located named way changed the crossings');
 });

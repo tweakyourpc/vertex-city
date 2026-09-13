@@ -60,6 +60,47 @@ function assignGroups(approaches) {
 }
 
 /**
+ * True when at least two arms leave the node on genuinely different bearings.
+ *
+ * Collinear arms are a kink in one street, or several named ways sharing its
+ * nodes; you do not paint a crossing there. 15 degrees is well inside the
+ * shallowest real fork and well outside the noise in a surveyed straight.
+ */
+function divergent(arms) {
+  for (let i = 0; i < arms.length; i++) {
+    for (let k = i + 1; k < arms.length; k++) {
+      const a = arms[i], b = arms[k];
+      if (Math.abs(a.ux * b.uy - a.uy * b.ux) > 0.26) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * How far the intersection box reaches from the node ALONG a given axis.
+ *
+ * A crossing sits outside the box, in line with the pavement it joins, and
+ * what puts it there is the width of the streets being crossed, measured in
+ * the direction you are travelling. A street parallel to that direction is the
+ * one you are standing on: it makes the box no longer, however wide it is.
+ * Taking the widest arm regardless of bearing confused the two, which set an
+ * avenue's own crossings back by half the avenue.
+ *
+ * @param {{arms?:Array, boxHalf?:number}} junction
+ * @param {number} dx unit direction along the approach
+ * @param {number} dy
+ */
+export function boxHalfAlong(junction, dx, dy) {
+  let reach = 0;
+  for (const arm of junction?.arms || []) {
+    // |cross| is 1 for a street square to this axis and 0 for one along it.
+    reach = Math.max(reach, arm.half * Math.abs(dx * arm.uy - dy * arm.ux));
+  }
+  // A node where everything is parallel is a kink in one street, not a box.
+  return reach > 0 ? reach : (junction?.boxHalf ?? 0);
+}
+
+/**
  * @param {Array} roads world road records
  * @param {{signalNodeIds?:Set, signalPoints?:Array}} options
  */
@@ -160,21 +201,31 @@ export function buildRoadGraph(roads, {
     const approaches = [...arms.values()];
     assignGroups(approaches);
     const names = [...new Set(approaches.map((a) => a.nameId).filter((n) => n >= 0))];
-    // How far the intersection box reaches from the node: half the widest
-    // street meeting here. A crossing belongs outside that box, in line with
-    // the pavement it joins, and the box is set by the street being crossed
-    // rather than by the one you are standing on. Both the renderer that paints
-    // a crossing and the traffic that stops behind it read this, so they cannot
-    // disagree about where the junction ends.
+    // Every street meeting here, as a direction away from the node and a half
+    // width. How far the box reaches depends on WHICH WAY you are leaving it,
+    // so the arms are kept rather than collapsed to one number: see
+    // boxHalfAlong. A single max meant an avenue's own crossings were set back
+    // by half the avenue, which is a distance in the wrong axis entirely, and
+    // put them a third of the way up the block.
+    const boxArms = [];
     let boxHalf = 0;
     for (const edgeId of node.incident) {
       const e = edges[edgeId];
       const w = Number.isFinite(e?.width) ? e.width : 3.38;
       boxHalf = Math.max(boxHalf, w / 2);
+      const away = e.from === node.id ? 1 : -1;
+      boxArms.push({ ux: e.dx * away, uy: e.dy * away, half: w / 2 });
     }
+    // Two names at a node is not an intersection. Park Avenue carries the
+    // separately named Park Avenue Tunnel and its service roads along the SAME
+    // nodes, so every vertex of a dead-straight avenue answered to "two names
+    // meet here" and became a junction: on a way with a vertex every few cells
+    // that is a junction every few cells, each painting its own crossing, and
+    // the carriageway disappeared under crosswalks. What makes a junction is
+    // arms that diverge, so that is what is asked.
     const j = { id: node.id, x: node.x, y: node.y, names, approaches,
-                signal: node.signal, boxHalf };
-    if (names.length >= 2) junctions.push(j);
+                signal: node.signal, boxHalf, arms: boxArms };
+    if (names.length >= 2 && divergent(boxArms)) junctions.push(j);
     if (node.signal && approaches.length >= 2) signalJunctions.push(j);
   }
 

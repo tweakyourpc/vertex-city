@@ -2,7 +2,7 @@ import { T, wrap } from './world/source.js';
 import { normAngle } from './camera.js';
 import { BLOCK, FOV, MAXD, MAX_CARS, MAX_PEDS, AGENT_CULL_D2, METERS_PER_CELL, PED_HEIGHT, PED_WIDTH, stopLineFor } from './config.js';
 import { fogOf } from './render/materials.js';
-import { positionOnEdge } from './world/roadgraph.js';
+import { positionOnEdge, boxHalfAlong } from './world/roadgraph.js';
 import { buildEdgeIndex } from './spatial.js';
 import { signalGroupForIncoming, signalState } from './traffic-signals.js';
 import {
@@ -593,7 +593,11 @@ export class Traffic {
     // to be behind the line, and the line itself comes from the junction's own
     // box size, which is what the renderer paints against.
     const junction = graph.junctions?.find((j) => j.id === node.id);
-    const boxHalf = junction?.boxHalf ?? lanes / 2;
+    // Along this approach, not the widest street at the node: the renderer
+    // paints the line by the same measure, and a car that stops by the other
+    // one waits a third of a block short of the crossing.
+    const boxHalf = junction ? boxHalfAlong(junction, edge.dx, edge.dy)
+      : lanes / 2;
     const stopBack = stopLineFor(boxHalf) + a.vehicle.length / 2;
     // Only brake for the light while there is still room to stop behind the
     // line. Past it the car is committed: braking there is what parked cars
