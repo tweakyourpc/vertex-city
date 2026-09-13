@@ -117,8 +117,14 @@ export class Lighting {
 
     // Restrained solar palette. Twilight tint peaks only near the horizon,
     // never at noon or in the middle of the night.
-    let top = mix([12,22,39], [113,159,182], k);
-    let bot = mix([32,44,61], [208,216,206], k);
+    // The night end of this ramp sat brighter than the buildings in front of
+    // it: walls came out at luminance 19 against a sky of 43, so a skyline read
+    // as a slightly darker smudge on a blue-grey field, which in the character
+    // renderer is very close to not reading at all. A night sky is the darkest
+    // thing in a city, not the brightest, and it has to be darker than the
+    // masonry standing against it for the masonry to have a shape.
+    let top = mix([3,5,11], [113,159,182], k);
+    let bot = mix([9,13,21], [208,216,206], k);
     top = mix(top,[112,131,150],dusk*0.40);
     bot = mix(bot,[227,180,129],dusk*0.65);
     this.skyTop = top;

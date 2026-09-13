@@ -19,7 +19,7 @@ export const HORIZON_FRAC = 0.52;      // horizon as a fraction of screen rows
 
 /** Ambient light floor: 0.15 night .. 1.0 day. Higher floor means nights stay
  * visible with faint colour rather than absolute black. */
-export const AMBIENT_FLOOR = 0.15;
+export const AMBIENT_FLOOR = 0.24;
 
 /** Sun elevation smoothstep range: full day above +12deg, full night below -8deg,
  * with golden hour visible in between. */
@@ -142,9 +142,13 @@ export const SEED = 1337;
 /* ------------------------------- palettes ------------------------------- */
 
 export const GLYPH_RAMP = ' .:-=+*#%@';
+// Warm interior glows dominate, with a few cooler tints so not every lit
+// window is the same yellow. These had been flattened toward white, which at
+// night is the one colour a window cannot be without looking like a hole in
+// the wall. Length must match FACADE so palIdx indexes both.
 export const LIT = [
-  [255, 230, 200], [200, 230, 255], [255, 200, 230], [200, 255, 220],
-  [255, 220, 180], [200, 255, 230], [255, 210, 220], [200, 255, 210],
+  [255, 196, 118], [138, 214, 255], [255, 150, 205], [178, 246, 190],
+  [255, 182, 104], [160, 222, 255], [255, 168, 188], [206, 250, 172],
 ];
 // Building facades and roofs. A spread of warm stone tones — beige, sand,
 // cream, taupe, warm grey, pale stone — so the city reads as varied masonry
