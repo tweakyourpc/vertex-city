@@ -264,6 +264,7 @@ export class ReadableRenderer {
     this.movingBuffer = gl.createBuffer();
     this.lightBuffer = gl.createBuffer();
     this.beaconBuffer = gl.createBuffer();
+    this.moverLightBuffer = gl.createBuffer();
     this.attributes = ['position','normal','colour','uv','kind','seed','quad'].map(name => gl.getAttribLocation(this.program,name));
     this.uniforms = Object.fromEntries(['camera','forward','tangent','aspect','horizon','daylight','time','haze',
       'wire','wireUnit','wireBuilding','wireWater','wireCanopy','wireGround','wireVoid','sunDir','wireFrontier','lightPass','signalTime'].map(name => [name,gl.getUniformLocation(this.program,name)]));
@@ -367,9 +368,9 @@ export class ReadableRenderer {
       ? `linear-gradient(rgb(${band(0.45,light.skyTop,0.30)}),rgb(${band(1.6,light.skyBottom,0.42)}))`
       : `linear-gradient(rgb(${light.skyTop.join(',')}),rgb(${light.skyBottom.join(',')}))`;
     this.geometry(this.staticBuffer,this.district.vertices.length/STRIDE);
-    const movers = buildMovers(traffic,this.district,time);
-    this.upload(this.movingBuffer,movers,gl.DYNAMIC_DRAW);
-    this.geometry(this.movingBuffer,movers.length/STRIDE);
+    const movers = buildMovers(traffic,this.district,time,light.dayAmt);
+    this.upload(this.movingBuffer,movers.vertices,gl.DYNAMIC_DRAW);
+    this.geometry(this.movingBuffer,movers.vertices.length/STRIDE);
 
     // Lights last, added onto the finished scene. Depth still tests, so a pool
     // does not shine through a wall, but nothing writes depth: overlapping
@@ -377,13 +378,18 @@ export class ReadableRenderer {
     const lights = this.district.lights;
     const beacons = this.district.beacons;
     const pools = lights.length && light.dayAmt < 0.999;
-    if (pools || beacons.length) {
+    if (pools || beacons.length || movers.lights.length) {
       gl.uniform1f(u.lightPass,1);
       gl.enable(gl.BLEND);
       gl.blendFunc(gl.ONE,gl.ONE);
       gl.depthMask(false);
       if (pools) this.geometry(this.lightBuffer,lights.length/STRIDE);
       if (beacons.length) this.geometry(this.beaconBuffer,beacons.length/STRIDE);
+      // Headlights move, so they cannot live in the static light buffer.
+      if (movers.lights.length) {
+        this.upload(this.moverLightBuffer,movers.lights,gl.DYNAMIC_DRAW);
+        this.geometry(this.moverLightBuffer,movers.lights.length/STRIDE);
+      }
       gl.depthMask(true);
       gl.disable(gl.BLEND);
       gl.uniform1f(u.lightPass,0);

@@ -66,8 +66,10 @@ test('night skies remain dark and noon is blue rather than magenta',()=>{
 });
 test('rendered movers use actual simulation positions and quiet mode emits none',()=>{
   const car={kind:'car',x:4,y:6,renderX:5,renderY:7,hx:1,hy:0};
-  const data=buildMovers({mode:1,agents:[car]}, {},0);
+  // buildMovers returns solid geometry and the light it throws, separately:
+  // headlights have to be added onto the scene, not painted into it.
+  const data=buildMovers({mode:1,agents:[car]}, {},0).vertices;
   assert.ok(data.length>0);
   for(let i=0;i<data.length;i+=STRIDE){assert.ok(Math.abs(data[i]-5)<2);assert.ok(Math.abs(data[i+1]-7)<1);}
-  assert.equal(buildMovers({mode:0,agents:[car]}, {},0).length,0);
+  assert.equal(buildMovers({mode:0,agents:[car]}, {},0).vertices.length,0);
 });

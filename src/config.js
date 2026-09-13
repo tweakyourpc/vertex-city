@@ -171,6 +171,16 @@ export const FACADE = [
 // A city street should look occupied. These were tuned when agents were cheap
 // raster sprites and pedestrians barely moved; both now route the road graph,
 // and an empty Manhattan reads as a model rather than a place.
+/**
+ * Which side of the road traffic keeps to, and therefore which side the driver
+ * sits on: the driver is always nearest the centreline.
+ *
+ * A per-country lookup is the honest version of this, since the answer is a
+ * property of the place being rendered. Until there is one, this is at least a
+ * single stated assumption rather than a driver silently sitting in the middle.
+ */
+export const DRIVE_ON_RIGHT = true;
+
 /* ------------------------------- crossings ------------------------------ */
 
 /**

@@ -1,5 +1,5 @@
 import { T, F, hash } from '../world/source.js';
-import { FLOOR_H, CROSS_SETBACK, CROSS_DEPTH, STOP_LINE_DEPTH, STOP_LINE_GAP } from '../config.js';
+import { FLOOR_H, CROSS_SETBACK, CROSS_DEPTH, STOP_LINE_DEPTH, STOP_LINE_GAP, DRIVE_ON_RIGHT } from '../config.js';
 
 /**
  * Vertex layout: position(3) normal(3) colour(3) uv(2) kind(1) seed(1)
@@ -641,27 +641,72 @@ export function buildDistrict(world, cam, radius = 145) {
   return { vertices:mesh.array(),lights:lights.array(),beacons:beacons.array(),walkers,cx,cy };
 }
 
-export function buildMovers(traffic, district, time) {
-  const mesh=new Mesh();
-  if(traffic.mode===0) return mesh.array();
+/**
+ * Moving geometry, and the light it throws.
+ *
+ * Returns both the solid mesh and a separate light mesh: headlights have to be
+ * added onto the scene rather than painted into it, the same way the street
+ * lamps are, or a beam is just a bright shape on the road instead of light
+ * falling on it.
+ */
+export function buildMovers(traffic, district, time, dayAmt = 0) {
+  const mesh=new Mesh(), glow=new Mesh();
+  if(traffic.mode===0) return { vertices:mesh.array(), lights:glow.array() };
   for(const car of traffic.agents) {
     if(car.kind!=='car') continue;
     const p=car.vehicle, x=car.renderX??car.x,y=car.renderY??car.y;
     const angle=Math.atan2(car.hy||0,car.hx||1),col=p?.paint.map(c=>c/255)||[.73,.24,.18];
     const len=p?.length||1.85,w=p?.width||.78;
     const ux=Math.cos(angle),uy=Math.sin(angle);
-    mesh.box(x,y,.16,len,w,.28,angle,col);
-    // Glazing, not a black box. The cabin was .23,.38,.44 in every light, which
-    // at night is near enough to the body to read as a solid block and by day
-    // hides that anyone is in there. Lighter glass, and a head behind it.
-    mesh.box(x,y,.44,len*.55,w*.83,.28,angle,[.50,.63,.69]);
     const tint=(car.vehicleSeed>>>0);
     const SKIN=[[.94,.78,.65],[.86,.67,.50],[.72,.52,.37],[.55,.38,.26],[.38,.26,.19],[.29,.19,.14]];
-    mesh.box(x-ux*len*.04,y-uy*len*.04,.50,.16,.16,.16,angle,SKIN[tint%SKIN.length]);
-    mesh.box(x,y,.70,len*.42,w*.78,.06,angle,col);
+    const skin=SKIN[tint%SKIN.length];
+    // The driver sits nearest the centreline, which is the left in right-hand
+    // traffic. They used to sit dead centre, which is no country's arrangement.
+    const dSide=DRIVE_ON_RIGHT?1:-1;
+    const glass=[.50,.63,.69];
+
+    if(p?.kind==='bus') {
+      // A bus is a box on wheels: one tall slab the whole length, a flat roof,
+      // and a band of windows down the side. Drawing it with a car's
+      // proportions, a long low body under a short cabin, made a stretch limo.
+      mesh.box(x,y,.14,len,w,1.06,angle,col);
+      mesh.box(x,y,1.20,len*.98,w*.96,.07,angle,col.map(c=>c*.82));
+      // Window band, inset a little so the body reads as bodywork around it.
+      for(const side of [-1,1]) {
+        mesh.box(x-uy*w*.5*side,y+ux*w*.5*side,.62,len*.90,.04,.42,angle,glass);
+      }
+      mesh.box(x+ux*len*.49,y+uy*len*.49,.58,.05,w*.88,.46,angle,glass);
+      mesh.box(x+ux*len*.34-uy*w*.22*dSide,y+uy*len*.34+ux*w*.22*dSide,
+        .74,.17,.17,.17,angle,skin);
+    } else {
+      mesh.box(x,y,.16,len,w,.28,angle,col);
+      // Glazing, not a black box. The cabin was .23,.38,.44 in every light,
+      // which at night is near enough to the body to read as a solid block and
+      // by day hides that anyone is in there.
+      mesh.box(x,y,.44,len*.55,w*.83,.28,angle,glass);
+      mesh.box(x-ux*len*.04-uy*w*.19*dSide,y-uy*len*.04+ux*w*.19*dSide,
+        .50,.16,.16,.16,angle,skin);
+      mesh.box(x,y,.70,len*.42,w*.78,.06,angle,col);
+    }
     for(const side of [-1,1]) for(const end of [-1,1]) {
       mesh.box(x+ux*len*.32*end-uy*w*.46*side,y+uy*len*.32*end+ux*w*.46*side,.075,.29,.12,.27,angle,[.12,.15,.16]);
     }
+    // Headlights after dark: a pool of light on the road ahead, not a lamp
+    // drawn on the bonnet. The disc's uv.x runs 0 at its centre to 1 at the
+    // rim, which the additive pass reads as falloff.
+    if(dayAmt < 0.55) {
+      const reach = len*1.9;
+      glow.disc(x+ux*reach, y+uy*reach, .02, len*2.4, [1,.95,.80], 5);
+      for(const side of [-1,1]) {
+        mesh.box(x+ux*len*.5-uy*w*.34*side, y+uy*len*.5+ux*w*.34*side,
+          .26, .06, .16, .12, angle, [1,.96,.86], 3);
+        // Tail lamps, so a car seen from behind is not a silhouette.
+        mesh.box(x-ux*len*.5-uy*w*.34*side, y-uy*len*.5+ux*w*.34*side,
+          .26, .05, .14, .10, angle, [.95,.12,.08], 3);
+      }
+    }
+
     // Indicators, on the side the car is turning, flashing about 1.5 Hz. A car
     // that changes direction without signalling first reads as teleporting into
     // the turn; the flash is what announces it.
@@ -706,5 +751,5 @@ export function buildMovers(traffic, district, time) {
     mesh.box(x-ux*swing-sx*.115,y-uy*swing-sy*.115,.33,.06,.07,.25,angle,shirt);
     mesh.box(x+ux*swing+sx*.115,y+uy*swing+sy*.115,.33,.06,.07,.25,angle,shirt);
   }
-  return mesh.array();
+  return { vertices:mesh.array(), lights:glow.array() };
 }
