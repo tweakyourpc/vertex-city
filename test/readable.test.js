@@ -358,3 +358,104 @@ test('crossings do not depend on how finely a street is drawn or renamed', () =>
   assert.equal(shape({ vertexStep: 30 }), dense, 'vertex spacing changed the crossings');
   assert.equal(shape({ redundantWays: false }), dense, 'a co-located named way changed the crossings');
 });
+
+// Park Avenue near the tunnel, structurally as OSM describes it: a DIVIDED
+// avenue whose two carriageways are separate ways, cross streets SPLIT at the
+// median so each carriageway gets its own node, a separately named tunnel way
+// that dives away below grade, a service road on the same nodes, and a vertex
+// every 3 cells. Four or five graph nodes make up one physical intersection.
+function dividedAvenue() {
+  const CARRIAGE = 7.0, MEDIAN = 5.0, ST_W = 4.2;
+  const WEST = 90 - MEDIAN / 2 - CARRIAGE / 2, EAST = 90 + MEDIAN / 2 + CARRIAGE / 2;
+  let next = 1;
+  const ids = new Map();
+  const nid = (x, y) => {
+    const k = `${x.toFixed(2)},${y.toFixed(2)}`;
+    if (!ids.has(k)) ids.set(k, next++);
+    return ids.get(k);
+  };
+  const dense = (keep) => {
+    const out = [];
+    for (let v = 0; v <= 180; v += 3) out.push(v);
+    for (const v of keep) if (!out.includes(v)) out.push(v);
+    return [...new Set(out)].sort((a, b) => a - b);
+  };
+  const YS = [30, 60, 90, 120, 150];
+  const ys = dense(YS);
+  const roads = [];
+  for (const x of [WEST, EAST]) {
+    const pts = ys.map((y) => [x, y]);
+    const nodeIds = ys.map((y) => nid(x, y));
+    roads.push({ cls: 'primary', width: CARRIAGE, nameId: 101,
+      tags: { oneway: 'yes' }, pts, nodeIds });
+    roads.push({ cls: 'service', width: 3, nameId: 301, tags: {},
+      pts: pts.map((p) => [...p]), nodeIds: [...nodeIds] });
+  }
+  const deep = ys.filter((y) => y >= 100);
+  roads.push({ cls: 'secondary', width: 6, nameId: 300,
+    tags: { tunnel: 'yes', layer: '-1' },
+    pts: deep.map((y) => [90, y]), nodeIds: deep.map((y) => nid(90, y)) });
+  for (const [i, y] of YS.entries()) {
+    for (const xs of [dense([WEST]).filter((x) => x <= 90), dense([EAST]).filter((x) => x >= 90)]) {
+      roads.push({ cls: 'residential', width: ST_W, nameId: 200 + i, tags: {},
+        pts: xs.map((x) => [x, y]), nodeIds: xs.map((x) => nid(x, y)) });
+    }
+  }
+  const graph = buildRoadGraph(roads, {});
+  return {
+    world: {
+      buildings: [], roads, junctions: graph.junctions,
+      h: [0], type: [T.VOID], pal: [0], bid: [0], flags: [0], sample() { return 0; },
+    },
+    graph, WEST, EAST, CARRIAGE, YS,
+  };
+}
+
+test('the several nodes of one intersection are marked once, not once each', () => {
+  const { world, graph, YS } = dividedAvenue();
+  // Four or five graph nodes per intersection, five intersections.
+  assert.equal(graph.junctions.length, YS.length,
+    `${graph.junctions.length} intersections for ${YS.length} cross streets`);
+
+  const quads = crossingQuads(buildDistrict(world, { x: 90, y: 90 }, 145).vertices);
+  const centres = quads.map((t) => [
+    (t[0][0] + t[1][0] + t[2][0]) / 3, (t[0][1] + t[1][1] + t[2][1]) / 3]);
+  assert.ok(centres.length > 0, 'no crossings were drawn at all');
+
+  // Two crossing quads at the same spot are the same marking painted twice.
+  // Being coplanar they fight in the depth buffer, and that is what tore the
+  // bands into smears that swam as the camera moved.
+  for (let i = 0; i < centres.length; i++) {
+    for (let k = i + 1; k < centres.length; k++) {
+      const d = Math.hypot(centres[i][0] - centres[k][0], centres[i][1] - centres[k][1]);
+      assert.ok(d > 0.3,
+        `two crossing quads ${d.toFixed(3)} cells apart at (${centres[i][0].toFixed(1)}, ${centres[i][1].toFixed(1)})`);
+    }
+  }
+});
+
+test('a divided avenue is marked on each carriageway, not once across both', () => {
+  const { world, WEST, EAST, CARRIAGE } = dividedAvenue();
+  const quads = crossingQuads(buildDistrict(world, { x: 90, y: 90 }, 145).vertices);
+  // The crossings of the avenue at the middle intersection: bars lying across
+  // a carriageway, north and south of it.
+  const onCarriageway = (cx) => quads.some((t) => {
+    const x = (t[0][0] + t[1][0] + t[2][0]) / 3;
+    const y = (t[0][1] + t[1][1] + t[2][1]) / 3;
+    return Math.abs(x - cx) < CARRIAGE / 2 && y > 90 && y < 90 + 12;
+  });
+  // Deduplicating by bearing alone collapsed these two into one, because the
+  // two carriageways of an avenue run the same way a median apart.
+  assert.ok(onCarriageway(WEST), 'the west carriageway is unmarked');
+  assert.ok(onCarriageway(EAST), 'the east carriageway is unmarked');
+});
+
+test('a tunnel portal is not an intersection to paint a crossing at', () => {
+  // Park Avenue Tunnel parts company with the road above it mid-block. Counted
+  // as an arm, that divergence made a junction there on open road.
+  const { graph } = dividedAvenue();
+  for (const j of graph.junctions) {
+    const nearest = Math.min(...[30, 60, 90, 120, 150].map((y) => Math.abs(j.y - y)));
+    assert.ok(nearest < 3, `an intersection at y=${j.y.toFixed(1)}, ${nearest.toFixed(1)} cells from any cross street`);
+  }
+});

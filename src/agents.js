@@ -592,7 +592,10 @@ export class Traffic {
     // half a car length of bonnet across the crossing. The bumper is what has
     // to be behind the line, and the line itself comes from the junction's own
     // box size, which is what the renderer paints against.
-    const junction = graph.junctions?.find((j) => j.id === node.id);
+    // By membership, not by id: several OSM nodes make up one intersection and
+    // the merged record is keyed by only one of them.
+    const junction = graph.junctionOfNode?.get(node.id)
+      ?? graph.junctions?.find((j) => j.id === node.id);
     // Along this approach, not the widest street at the node: the renderer
     // paints the line by the same measure, and a car that stops by the other
     // one waits a third of a block short of the crossing.

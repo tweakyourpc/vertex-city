@@ -136,29 +136,49 @@ function tree(mesh,x,y,seed) {
  * the crossing sits, and `width` the carriageway it has to span.
  */
 /**
- * Walk `want` cells along a polyline from vertex `k`, in direction `step`
- * (-1 towards pts[0], +1 towards the end), following every bend.
+ * Distance along a polyline to each of its vertices.
  *
- * Returns the point reached and the unit direction of the segment it landed
- * on, or null if the road ends first. Measuring a setback along the single
- * segment touching a vertex cannot work on surveyed geometry, where a way may
+ * Setbacks are measured in arc length rather than along the one segment that
+ * touches a vertex. That cannot work on surveyed geometry, where a way may
  * carry a vertex every few cells: the distance either overshot into the next
  * block or, guarded against that, vanished entirely.
  */
-function walkPolyline(pts,k,step,want) {
-  let left=want,i=k;
-  while(true) {
-    const nx=i+step;
-    if(nx<0||nx>=pts.length) return null;
-    const a=pts[i],b=pts[nx];
-    const dx=b[0]-a[0],dy=b[1]-a[1],len=Math.hypot(dx,dy);
-    if(len>1e-6) {
-      const ux=dx/len,uy=dy/len;
-      if(left<=len) return {x:a[0]+ux*left,y:a[1]+uy*left,ux,uy};
-      left-=len;
-    }
-    i=nx;
+function arcLengths(pts) {
+  const cum=[0];
+  for(let i=1;i<pts.length;i++) {
+    cum.push(cum[i-1]+Math.hypot(pts[i][0]-pts[i-1][0],pts[i][1]-pts[i-1][1]));
   }
+  return cum;
+}
+
+/** The point at arc length `s`, with the direction of the segment holding it. */
+function arcPoint(pts,cum,s) {
+  const total=cum[cum.length-1];
+  if(s<0||s>total) return null;
+  let i=1;
+  while(i<cum.length-1&&cum[i]<s) i++;
+  const a=pts[i-1],b=pts[i],len=cum[i]-cum[i-1];
+  if(len<1e-9) return null;
+  const t=(s-cum[i-1])/len;
+  return {
+    x:a[0]+(b[0]-a[0])*t, y:a[1]+(b[1]-a[1])*t,
+    ux:(b[0]-a[0])/len, uy:(b[1]-a[1])/len,
+  };
+}
+
+/** Arc length of the point on the polyline closest to (px,py). */
+function nearestArc(pts,cum,px,py) {
+  let best=null,bd=Infinity;
+  for(let i=1;i<pts.length;i++) {
+    const a=pts[i-1],b=pts[i];
+    const dx=b[0]-a[0],dy=b[1]-a[1],L=dx*dx+dy*dy;
+    if(L<1e-12) continue;
+    let t=((px-a[0])*dx+(py-a[1])*dy)/L;
+    t=t<0?0:t>1?1:t;
+    const d=Math.hypot(px-(a[0]+dx*t),py-(a[1]+dy*t));
+    if(d<bd){bd=d;best=cum[i-1]+t*Math.sqrt(L);}
+  }
+  return best;
 }
 
 function crossing(mesh,px,py,ux,uy,width) {
@@ -541,8 +561,31 @@ export function buildDistrict(world, cam, radius = 145) {
   const mesh=new Mesh(), lights=new Mesh(), beacons=new Mesh(), walkers=[];
   const cx=Math.floor(cam.x/32)*32+16,cy=Math.floor(cam.y/32)*32+16;
   const nearbyJunctions=(world.junctions||[]).filter(j=>Math.hypot(j.x-cx,j.y-cy)<radius+15);
-  // Junction approaches whose crossing and signal are already in this mesh.
-  const drawnCrossings=new Set();
+  // Crossings already in this mesh, as {side,x,y}: what has been marked, so
+  // the same bars are not painted again by another way through the junction.
+  const drawnCrossings=[];
+  // Intersection nodes on a 4-cell hash, so a road finds the intersections it
+  // meets by looking at its own vertices instead of testing every junction.
+  const JCELL=4, jhash=new Map();
+  for(const j of nearbyJunctions) {
+    for(const [mx,my] of j.memberPts||[[j.x,j.y]]) {
+      const key=Math.floor(mx/JCELL)+','+Math.floor(my/JCELL);
+      if(!jhash.has(key)) jhash.set(key,[]);
+      jhash.get(key).push({j,mx,my});
+    }
+  }
+  const junctionsMetBy=(pts)=>{
+    const met=new Set();
+    for(const [vx,vy] of pts) {
+      const gx=Math.floor(vx/JCELL),gy=Math.floor(vy/JCELL);
+      for(let ox=-1;ox<=1;ox++) for(let oy=-1;oy<=1;oy++) {
+        for(const e of jhash.get((gx+ox)+','+(gy+oy))||[]) {
+          if(Math.hypot(e.mx-vx,e.my-vy)<2.5) met.add(e.j);
+        }
+      }
+    }
+    return met;
+  };
 
   // Road segments in range, gathered once. Trees are placed from the raster,
   // but a road is DRAWN wider than it is rasterised, so a cell the world calls
@@ -643,34 +686,40 @@ export function buildDistrict(world, cam, radius = 145) {
     if(['motorway','trunk','motorway_link','trunk_link'].includes(road.cls)) continue;
     const foot=['footway','path','pedestrian','steps','cycleway'].includes(road.cls);
     const width=road.width || 3.8;
-    // Crossings belong to the junction, not to a segment of road, so they are
-    // placed by walking the POLYLINE out from each junction vertex rather than
-    // measured from one segment's end. A surveyed way carries a vertex every
-    // few cells for kerb geometry and tunnel portals; measuring per segment
-    // meant every one of those stubs near an intersection painted its own set
-    // of bars, which is what buried Park Avenue under crosswalks.
-    if(!foot) for(let k=0;k<road.pts.length;k++) {
-      const [vx,vy]=road.pts[k];
-      const j=nearbyJunctions.find(n2=>Math.hypot(n2.x-vx,n2.y-vy)<2.5);
-      if(!j||Math.hypot(vx-cx,vy-cy)>radius+CROSS_DEPTH) continue;
-      // Each way of leaving the junction, walked along this road's own geometry.
+    // Crossings belong to the intersection, not to a segment of road, so they
+    // are measured out along the POLYLINE from the point where it passes the
+    // intersection's centre. A surveyed way carries a vertex every few cells
+    // for kerb geometry and tunnel portals; measuring from one segment's end
+    // meant every one of those stubs painted its own set of bars, which is
+    // what buried Park Avenue under crosswalks.
+    const arc=!foot&&road.pts.length>1?arcLengths(road.pts):null;
+    // The road has to actually MEET the intersection: one of its own vertices
+    // has to be one of the intersection's nodes. Matched by position, because
+    // a road record carries OSM way ids while the graph numbers its nodes from
+    // scratch, and a procedural city has no ids at all. Looked up rather than
+    // scanned: every road against every junction is the shape of a hang.
+    if(arc) for(const j of junctionsMetBy(road.pts)) {
+      const s0=nearestArc(road.pts,arc,j.x,j.y);
+      if(s0===null) continue;
       for(const step of [-1,1]) {
-        const at=walkPolyline(road.pts,k,step,1e-3);
+        const at=arcPoint(road.pts,arc,s0+step*0.01);
         if(!at) continue;
         // The box is measured ALONG this approach. Setting back by the widest
         // street at the node regardless of bearing pushed an avenue's own
         // crossings half an avenue up the block.
         const back=crossingCentreFor(boxHalfAlong(j,at.ux,at.uy)||width/2);
-        // One crossing per junction approach, drawn once. A junction vertex is
-        // shared by the segment arriving and the one leaving, and by every road
-        // through it; without this each of them painted the same bars again.
-        const side=(Math.round(Math.atan2(at.uy,at.ux)/(Math.PI/8))+16)%16;
-        const stamp=j.id*16+side;
-        if(drawnCrossings.has(stamp)) continue;
-        const p=walkPolyline(road.pts,k,step,back);
+        const p=arcPoint(road.pts,arc,s0+step*back);
         // The road ends before the crossing would: a stub, not an approach.
         if(!p) continue;
-        drawnCrossings.add(stamp);
+        // Drawn once per marking. An intersection is entered by the segment
+        // arriving and the one leaving, and by every way through it, so the
+        // same bars were painted several times over. The test is whether a
+        // crossing is already at this spot on this bearing, not merely on this
+        // bearing: a divided avenue needs one on each carriageway, and those
+        // share a bearing while standing a median apart.
+        const side=(Math.round(Math.atan2(at.uy,at.ux)/(Math.PI/8))+16)%16;
+        if(drawnCrossings.some(c=>c.side===side&&Math.hypot(c.x-p.x,c.y-p.y)<CROSS_DEPTH)) continue;
+        drawnCrossings.push({side,x:p.x,y:p.y});
         // The direction a driver on this approach is travelling: into the
         // junction, against the walk. The stop line is painted behind the
         // crossing along it, so the sign has to be the driver's, not the walk's.

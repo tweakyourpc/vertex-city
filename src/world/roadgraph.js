@@ -5,6 +5,8 @@
  * junction. Synthetic worlds fall back to exact, quantized vertex positions.
  */
 
+import { CROSS_GAP, CROSS_DEPTH } from '../config.js';
+
 const NON_DRIVABLE = new Set([
   'bridleway', 'construction', 'corridor', 'cycleway', 'elevator', 'footway',
   'path', 'pedestrian', 'platform', 'proposed', 'raceway', 'steps', 'track',
@@ -59,6 +61,13 @@ function assignGroups(approaches) {
   }
 }
 
+/** A street you could walk across here, rather than a ramp leaving the surface. */
+function atGrade(tags = {}) {
+  if (tags.tunnel && tags.tunnel !== 'no') return false;
+  if (tags.bridge && tags.bridge !== 'no') return false;
+  return !Number(tags.layer);
+}
+
 /**
  * True when at least two arms leave the node on genuinely different bearings.
  *
@@ -93,11 +102,101 @@ function divergent(arms) {
 export function boxHalfAlong(junction, dx, dy) {
   let reach = 0;
   for (const arm of junction?.arms || []) {
-    // |cross| is 1 for a street square to this axis and 0 for one along it.
-    reach = Math.max(reach, arm.half * Math.abs(dx * arm.uy - dy * arm.ux));
+    // |cross| is 1 for a street square to this axis and 0 for one along it,
+    // measured out from wherever that arm's own node sits.
+    const from = (arm.ox || 0) * dx + (arm.oy || 0) * dy;
+    reach = Math.max(reach, from + arm.half * Math.abs(dx * arm.uy - dy * arm.ux));
   }
   // A node where everything is parallel is a kink in one street, not a box.
   return reach > 0 ? reach : (junction?.boxHalf ?? 0);
+}
+
+/**
+ * Collapse the several nodes OSM uses for one physical intersection into one.
+ *
+ * A divided avenue meets a cross street at a node per carriageway, and the
+ * cross street is usually split at the median besides, so Park Avenue and 33rd
+ * is four or five nodes a few cells apart. Each of them is a real junction by
+ * itself, and each painted its own crossing: the bands came out three times
+ * too deep, smeared, and fighting each other in the depth buffer, because they
+ * were three crossings of the same street a metre apart.
+ *
+ * Two nodes are one intersection when the gap between the boxes they each
+ * claim could not hold a crossing anyway. That is the test, rather than a
+ * distance picked by eye: if there is no room out there to mark a separate
+ * crossing, there is no separate intersection to mark it for. It comes from
+ * the same two constants the crossings are drawn from, so the two cannot
+ * drift apart. A divided avenue's two carriageways merge; two real
+ * intersections a block apart do not come close to merging.
+ */
+const SAME_INTERSECTION = 2 * (CROSS_GAP + CROSS_DEPTH);
+
+function mergeJunctions(list) {
+  const parent = list.map((_, i) => i);
+  const find = (i) => { while (parent[i] !== i) { parent[i] = parent[parent[i]]; i = parent[i]; } return i; };
+  // On a spatial hash: a city extract has thousands of junctions and comparing
+  // every pair is millions of hypots on every world load.
+  const widest = list.reduce((m, j) => Math.max(m, j.boxHalf), 0);
+  const cell = Math.max(8, 2 * widest + SAME_INTERSECTION);
+  const buckets = new Map();
+  const keyOf = (x, y) => `${Math.floor(x / cell)},${Math.floor(y / cell)}`;
+  for (let i = 0; i < list.length; i++) {
+    const k = keyOf(list[i].x, list[i].y);
+    if (!buckets.has(k)) buckets.set(k, []);
+    buckets.get(k).push(i);
+  }
+  for (let i = 0; i < list.length; i++) {
+    const a = list[i];
+    const gx = Math.floor(a.x / cell), gy = Math.floor(a.y / cell);
+    for (let ox = -1; ox <= 1; ox++) for (let oy = -1; oy <= 1; oy++) {
+      for (const k of buckets.get(`${gx + ox},${gy + oy}`) || []) {
+        if (k <= i) continue;
+        const b = list[k];
+        const reach = a.boxHalf + b.boxHalf + SAME_INTERSECTION;
+        if (Math.hypot(a.x - b.x, a.y - b.y) > reach) continue;
+        parent[find(i)] = find(k);
+      }
+    }
+  }
+  const groups = new Map();
+  for (let i = 0; i < list.length; i++) {
+    const r = find(i);
+    if (!groups.has(r)) groups.set(r, []);
+    groups.get(r).push(list[i]);
+  }
+  const out = [];
+  for (const group of groups.values()) {
+    if (group.length === 1) {
+      out.push({ ...group[0], members: [group[0].id], memberPts: [[group[0].x, group[0].y]] });
+      continue;
+    }
+    const members = new Set(group.map((g) => g.id));
+    const x = group.reduce((s, g) => s + g.x, 0) / group.length;
+    const y = group.reduce((s, g) => s + g.y, 0) / group.length;
+    // An arm that only leads to another node of this same intersection is
+    // internal to it: the stub across a median is not a street to cross.
+    // Each arm keeps where its own node sits relative to the merged centre, so
+    // the box still clears a street on the far side of the median rather than
+    // being measured from a centre none of the streets actually pass through.
+    const arms = [];
+    for (const g of group) for (const arm of g.arms) {
+      if (!members.has(arm.to)) arms.push({ ...arm, ox: g.x - x, oy: g.y - y });
+    }
+    out.push({
+      // The lowest member id, so the signal phase offset is stable however the
+      // nodes happen to be ordered.
+      // memberPts, not just ids: a renderer holds polylines, and a road knows
+      // where its vertices are long before it knows what the graph called them.
+      id: Math.min(...members), x, y, members: [...members],
+      memberPts: group.map((g) => [g.x, g.y]),
+      names: [...new Set(group.flatMap((g) => g.names))],
+      approaches: group.flatMap((g) => g.approaches),
+      signal: group.some((g) => g.signal),
+      boxHalf: Math.max(...group.map((g) => g.boxHalf)),
+      arms,
+    });
+  }
+  return out;
 }
 
 /**
@@ -212,9 +311,17 @@ export function buildRoadGraph(roads, {
     for (const edgeId of node.incident) {
       const e = edges[edgeId];
       const w = Number.isFinite(e?.width) ? e.width : 3.38;
-      boxHalf = Math.max(boxHalf, w / 2);
       const away = e.from === node.id ? 1 : -1;
-      boxArms.push({ ux: e.dx * away, uy: e.dy * away, half: w / 2 });
+      // A ramp leaving the surface is not a street you can cross into, and the
+      // portal where it parts company with the road above is not an
+      // intersection. Park Avenue Tunnel dives away mid-block; counted as an
+      // arm it made a junction there and painted a crossing on open road.
+      if (!atGrade(e.tags)) continue;
+      boxHalf = Math.max(boxHalf, w / 2);
+      boxArms.push({
+        ux: e.dx * away, uy: e.dy * away, half: w / 2,
+        to: away > 0 ? e.to : e.from, nameId: e.nameId,
+      });
     }
     // Two names at a node is not an intersection. Park Avenue carries the
     // separately named Park Avenue Tunnel and its service roads along the SAME
@@ -229,7 +336,14 @@ export function buildRoadGraph(roads, {
     if (node.signal && approaches.length >= 2) signalJunctions.push(j);
   }
 
-  return { nodes, edges, junctions, signalJunctions };
+  const merged = mergeJunctions(junctions);
+  const junctionOfNode = new Map();
+  for (const j of merged) for (const id of j.members) junctionOfNode.set(id, j);
+
+  return {
+    nodes, edges, junctions: merged, signalJunctions, junctionOfNode,
+    nodeJunctions: junctions,
+  };
 }
 
 export function positionOnEdge(graph, edge, distance, laneOffset = 0) {
