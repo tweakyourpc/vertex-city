@@ -61,6 +61,12 @@ uniform vec3 wireVoid;
 uniform vec3 sunDir;   // unit vector toward the sun, world axes
 uniform vec3 wireFrontier;
 uniform float lightPass;
+// The signal clock, already reduced to one cycle on the CPU. It cannot share
+// the general time uniform: that is wrapped to keep it inside mediump range,
+// and 10000 mod 32 is 16, so every wrap flipped every signal in the city by
+// half a cycle in the drawing while the cars went on obeying the real clock.
+// Half the time the lamps shown were the exact inverse of the lamps obeyed.
+uniform float signalTime;
 float noise(vec2 p) { return fract(sin(dot(p, vec2(12.9898,78.233)) + mod(vSeed, 997.0)) * 437.5453); }
 void main() {
   vec3 colour = vColour;
@@ -92,7 +98,7 @@ void main() {
       float rem = vSeed - bits * 8.0;
       float grp = floor(rem / 4.0);
       float lamp = rem - grp * 4.0;
-      float phase = mod(time + off + grp * 16.0, 32.0);
+      float phase = mod(signalTime + off + grp * 16.0, 32.0);
       float state = phase < 12.0 ? 2.0 : (phase < 15.0 ? 1.0 : 0.0);
       float on = 1.0 - step(0.5, abs(state - lamp));
       float far = 1.0 - smoothstep(110.0, 300.0, vDistance);
@@ -260,7 +266,7 @@ export class ReadableRenderer {
     this.beaconBuffer = gl.createBuffer();
     this.attributes = ['position','normal','colour','uv','kind','seed','quad'].map(name => gl.getAttribLocation(this.program,name));
     this.uniforms = Object.fromEntries(['camera','forward','tangent','aspect','horizon','daylight','time','haze',
-      'wire','wireUnit','wireBuilding','wireWater','wireCanopy','wireGround','wireVoid','sunDir','wireFrontier','lightPass'].map(name => [name,gl.getUniformLocation(this.program,name)]));
+      'wire','wireUnit','wireBuilding','wireWater','wireCanopy','wireGround','wireVoid','sunDir','wireFrontier','lightPass','signalTime'].map(name => [name,gl.getUniformLocation(this.program,name)]));
     this.world = null;
     this.district = null;
     this.generation = 0;
@@ -325,7 +331,11 @@ export class ReadableRenderer {
     gl.uniform1f(u.aspect,w/h);
     gl.uniform1f(u.horizon,1-2*cam.hz/screen.rows);
     gl.uniform1f(u.daylight,light.dayAmt);
-    gl.uniform1f(u.time,time%10000);
+    // Small enough that mediump keeps real precision: at 10000 the step
+    // between representable values is about 8, which makes a 2 Hz blink and a
+    // moving ripple meaningless.
+    gl.uniform1f(u.time,((time%64)+64)%64);
+    gl.uniform1f(u.signalTime,((time%32)+32)%32);
     gl.uniform3f(u.haze,light.skyBottom[0]/255,light.skyBottom[1]/255,light.skyBottom[2]/255);
     gl.uniform1f(u.wire,wireframe?1:0);
     gl.uniform1f(u.lightPass,0);
