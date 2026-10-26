@@ -8,6 +8,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { OsmWorld, materialOf, MAT, parseLevels } from '../src/world/osm.js';
+import { CompositeWorld } from '../src/world/composite.js';
 import { buildingAt, pick } from '../src/pick.js';
 import { Panel } from '../src/render/panel.js';
 import { Camera } from '../src/camera.js';
@@ -95,6 +96,23 @@ test('buildingAt recovers the tower from a click just outside the footprint', ()
   assert.ok(edge, 'expected a non-building cell adjacent to the footprint');
   const b = buildingAt(w, edge.nx + 0.5, edge.ny + 0.5);
   assert.equal(b, cell.b, 'the facade-boundary fallback should name the tower');
+});
+
+test('buildingAt reads building ids by slot in a chunked world', () => {
+  // Real cities load into a CompositeWorld, whose cells live in 32x32 chunks:
+  // its bid array is indexed by world.sample(), never by y * width + x.
+  const osm = new OsmWorld(BBOX, elements(), 'Test');
+  const world = new CompositeWorld(osm);
+  let checked = 0;
+  for (let cy = 0; cy < osm.height; cy++) {
+    for (let cx = 0; cx < osm.width; cx++) {
+      const id = osm.bid[cy * osm.width + cx];
+      if (!id) continue;
+      assert.equal(buildingAt(world, cx + 0.5, cy + 0.5), osm.buildings[id], `wrong building at ${cx},${cy}`);
+      checked++;
+    }
+  }
+  assert.ok(checked > 10, 'the sweep must cover the footprint');
 });
 
 test('pick reports a building click, not ground', () => {

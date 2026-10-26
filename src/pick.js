@@ -60,7 +60,9 @@ export function pick(screen, cam, world, col, row, skyMarks) {
  *
  * O(1) and exact: OsmWorld writes the owning building id into `world.bid` for
  * every footprint cell at rasterization time, so the answer is a single array
- * read. A click can land on a cell just outside the footprint (the ray grazes
+ * read. The read goes through `world.sample()`, like every other per-cell
+ * field: a chunked world (the CompositeWorld every real city loads into)
+ * stores cells by slot, not at `y * width + x`. A click can land on a cell just outside the footprint (the ray grazes
  * a wall and the depth resolves to a cell the fill never touched), in which
  * case we take the nearest orthogonal neighbour that is a building. That
  * recovers the right tower for the overwhelming majority of edge clicks
@@ -73,9 +75,8 @@ export function buildingAt(world, wx, wy) {
   if (!world || !world.bid || !world.buildings) return null;
   const cx = Math.floor(wx);
   const cy = Math.floor(wy);
-  if (cx < 0 || cy < 0 || cx >= world.width || cy >= world.height) return null;
 
-  const id = world.bid[cy * world.width + cx];
+  const id = world.bid[world.sample(cx, cy)];
   if (id) return world.buildings[id] || null;
 
   // Facade-boundary fallback: the clicked cell is just outside a footprint.
@@ -84,10 +85,7 @@ export function buildingAt(world, wx, wy) {
   for (let dy = -1; dy <= 1; dy++) {
     for (let dx = -1; dx <= 1; dx++) {
       if (!dx && !dy) continue;
-      const nx = cx + dx;
-      const ny = cy + dy;
-      if (nx < 0 || ny < 0 || nx >= world.width || ny >= world.height) continue;
-      const nid = world.bid[ny * world.width + nx];
+      const nid = world.bid[world.sample(cx + dx, cy + dy)];
       if (!nid) continue;
       const dist = dx * dx + dy * dy;
       if (dist < bd) { bd = dist; best = world.buildings[nid] || null; }
