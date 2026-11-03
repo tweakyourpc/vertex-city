@@ -73,6 +73,12 @@ export class Camera {
     this.movement = 'walk';
   }
 
+  applyLook({ x, y }, rows) {
+    this.angle -= x * 0.004;
+    this.pitch = Math.max(-rows * 0.9,
+      Math.min(rows * 1.5, this.pitch + y * 0.35));
+  }
+
   /** Rebuild ray tables. Call after resize or when the facing angle changes. */
   buildRays(screen) {
     if (this.cols !== screen.cols) {
